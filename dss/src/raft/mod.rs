@@ -44,11 +44,14 @@ impl State {
 // A single Raft peer.
 pub struct Raft {
     // RPC end points of all peers
+    // 连接其他的raft peer
     peers: Vec<RaftClient>,
     // Object to hold this peer's persisted state
+    // 用于持久化数据
     persister: Box<dyn Persister>,
     // this peer's index into peers[]
     me: usize,
+    // 状态
     state: Arc<State>,
     // Your data here (2A, 2B, 2C).
     // Look at the paper's Figure 2 for a description of what
@@ -89,6 +92,7 @@ impl Raft {
     /// save Raft's persistent state to stable storage,
     /// where it can later be retrieved after a crash and restart.
     /// see paper's Figure 2 for a description of what should be persistent.
+    /// 存储持久化的信息
     fn persist(&mut self) {
         // Your code here (2C).
         // Example:
@@ -98,6 +102,7 @@ impl Raft {
     }
 
     /// restore previously persisted state.
+    /// 重新获取之前保存的持久化信息
     fn restore(&mut self, data: &[u8]) {
         if data.is_empty() {
             // bootstrap without any state?
@@ -185,8 +190,10 @@ impl Raft {
 // ```rust
 // struct Node { sender: Sender<Msg> }
 // ```
+// 通过RPC实现则使用Raft结构，也可以通过多线程+channel的形式实现（当然是选择RPC）
 #[derive(Clone)]
 pub struct Node {
+    raft: Arc<Mutex<Raft>>,
     // Your code here.
 }
 
@@ -258,5 +265,9 @@ impl RaftService for Node {
     fn request_vote(&self, args: RequestVoteArgs) -> RpcFuture<RequestVoteReply> {
         // Your code here (2A, 2B).
         unimplemented!()
+    }
+
+    fn append_entries(&self, args: AppendEntriesArg) -> RpcFuture<AppendEntriesApply>{
+
     }
 }
