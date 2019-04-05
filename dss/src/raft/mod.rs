@@ -41,6 +41,53 @@ impl State {
     }
 }
 
+pub struct PersistState{
+    // persist in all server
+    pub term: u64,
+    pub is_leader: bool,
+    pub vote_for: i32,
+    pub log: Vec<u64>,
+}
+
+impl PersistState{
+    pub fn new() -> PersistState{
+        PersistState{
+            term: 0,
+            is_leader: false,
+            vote_for: -1,
+            log: Vec::new(),
+        }
+    }
+
+    pub from_persist(_term: u64, _vote_for: u64, _log: Vec<u64>) -> PersistState{
+        PersistState{
+            term: _term,
+            is_leader:false,
+            vote_for: _vote_for,
+            log: _log,
+        }
+    }
+}
+
+pub struct VolatileState{
+    // volatile in all server
+    pub commit_index: u64,
+    pub last_applied: u64,
+
+    // volatile on leader
+    pub next_index: Option<Vec<u64>>, //index of next entry to send to that server
+    pub match_index: Option<Vec<u64>>, // highest log enrty replicated in that server
+}
+
+impl VolatileState{
+    fn new() -> VolatileState{
+        commit_index: 0,
+        last_applied: 0,
+        next_index: None,
+        match_index: None,
+    } 
+}
+
 // A single Raft peer.
 pub struct Raft {
     // RPC end points of all peers
@@ -53,6 +100,10 @@ pub struct Raft {
     me: usize,
     // 状态
     state: Arc<State>,
+
+    pstate: Arc<PersistState>,
+
+    vstate: Arc<VolatileState>,
     // Your data here (2A, 2B, 2C).
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
@@ -73,6 +124,7 @@ impl Raft {
         persister: Box<dyn Persister>,
         apply_ch: UnboundedSender<ApplyMsg>,
     ) -> Raft {
+        // 获取持久化的raft状态
         let raft_state = persister.raft_state();
 
         // Your initialization code here (2A, 2B, 2C).
@@ -201,7 +253,9 @@ impl Node {
     /// Create a new raft service.
     pub fn new(raft: Raft) -> Node {
         // Your code here.
-        Node {}
+        Node {
+            raft: Arc::new(Mutex::new(Raft::new())),
+        }
     }
 
     /// the service using Raft (e.g. a k/v server) wants to start
@@ -216,6 +270,8 @@ impl Node {
     /// if it's ever committed. the second return value is the current
     /// term. the third return value is true if this server believes it is
     /// the leader.
+    /// (log index, term, is_leader)
+    /// 用于发起一个command
     /// This method must return quickly.
     pub fn start<M>(&self, command: &M) -> Result<(u64, u64)>
     where
