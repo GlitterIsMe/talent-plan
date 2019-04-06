@@ -209,6 +209,7 @@ impl Raft {
         peer.request_vote(&args).map_err(Error::Rpc).wait()
     }
 
+    // append_entry
     fn start<M>(&self, command: &M) -> Result<(u64, u64)>
     where
         M: labcodec::Message,
@@ -247,15 +248,24 @@ impl Raft {
 pub struct Node {
     raft: Arc<Mutex<Raft>>,
     // Your code here.
+    need_launch_election: Arc<Mutex<bool>>,
 }
 
 impl Node {
     /// Create a new raft service.
     pub fn new(raft: Raft) -> Node {
         // Your code here.
-        Node {
+        let node = Node {
             raft: Arc::new(Mutex::new(Raft::new())),
+            need_launch_election: Arc::new(Mutex::new(false)),
         }
+        //spawn a thread to start a election periodly
+
+        thread::spwan(move ||{
+            
+        });
+
+        node
     }
 
     /// the service using Raft (e.g. a k/v server) wants to start
@@ -271,7 +281,7 @@ impl Node {
     /// term. the third return value is true if this server believes it is
     /// the leader.
     /// (log index, term, is_leader)
-    /// 用于发起一个command
+    /// 用于发起一个command,append_entry
     /// This method must return quickly.
     pub fn start<M>(&self, command: &M) -> Result<(u64, u64)>
     where
