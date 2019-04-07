@@ -10,5 +10,7 @@ extern crate log;
 #[macro_use]
 extern crate prost_derive;
 
+extern crate random;
+
 mod kvraft;
 mod raft;

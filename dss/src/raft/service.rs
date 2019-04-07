@@ -22,7 +22,7 @@ pub struct RequestVoteArgs {
     candidateId: u64,
     // index of candidate's last log entry
     lastLogIndex: u64,
-    // term of candidate's last log entry 
+    // term of candidate's last log entry
     lastLogTerm: u64,
 }
 
@@ -33,14 +33,14 @@ pub struct RequestVoteReply {
     // current term, for candidate to update itself
     term: u64,
     // candidate recieve vote when it is ture
-    voteGranted: bool
+    voteGranted: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]
-pub struct AppendEntriesArgs{
+pub struct AppendEntriesArgs {
     // leader's term
     term: u64,
-    // when client connect to follower 
+    // when client connect to follower
     // then it will be redirected to leader by this id
     leaderId: u64,
     // index of log entry immidiately preceding new ones
@@ -54,10 +54,10 @@ pub struct AppendEntriesArgs{
 }
 
 #[derive(CLone, PartialEq, Message)]
-pub struct AppendEntriesReply{
+pub struct AppendEntriesReply {
     // current term
     term: u64,
-    // if follower contained entry 
+    // if follower contained entry
     // matching prevLogIndex and prevLogTerm
     success: bool,
 }
