@@ -16,13 +16,18 @@ pub use self::raft::{
 #[derive(Clone, PartialEq, Message)]
 pub struct RequestVoteArgs {
     // Your data here (2A, 2B).
+
     // candidate's term
+    #[prost(uint64, tag = "1")]
     term: u64,
     // cadidate requesting vote
+    #[prost(uint64, tag = "2")]
     candidateId: u64,
     // index of candidate's last log entry
+    #[prost(uint64, tag = "3")]
     lastLogIndex: u64,
     // term of candidate's last log entry
+    #[prost(uint64, tag = "4")]
     lastLogTerm: u64,
 }
 
@@ -31,6 +36,7 @@ pub struct RequestVoteArgs {
 pub struct RequestVoteReply {
     // Your data here (2A).
     // current term, for candidate to update itself
+    #[prost(uint64, tag = "1")]
     term: u64,
     // candidate recieve vote when it is ture
     voteGranted: bool,
@@ -39,6 +45,7 @@ pub struct RequestVoteReply {
 #[derive(Clone, PartialEq, Message)]
 pub struct AppendEntriesArgs {
     // leader's term
+    #[prost(uint64, tag = "1")]
     term: u64,
     // when client connect to follower
     // then it will be redirected to leader by this id
@@ -56,6 +63,7 @@ pub struct AppendEntriesArgs {
 #[derive(CLone, PartialEq, Message)]
 pub struct AppendEntriesReply {
     // current term
+    #[prost(uint64, tag = "1")]
     term: u64,
     // if follower contained entry
     // matching prevLogIndex and prevLogTerm
