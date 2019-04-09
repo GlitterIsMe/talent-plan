@@ -19,9 +19,9 @@ service! {
 use echo::{add_service, Client, Service};
 
 #[derive(Clone)]
-struct EchoService;
+struct TestService;
 
-impl Service for EchoService {
+impl Service for TestService {
     fn ping(&self, input: Echo) -> RpcFuture<Echo> {
         Box::new(futures::future::result(Ok(input.clone())))
     }
@@ -31,7 +31,7 @@ fn main() {
     let rn = Network::new();
     let server_name = "echo_server";
     let mut builder = ServerBuilder::new(server_name.to_owned());
-    add_service(EchoService, &mut builder).unwrap();
+    add_service(TestService, &mut builder).unwrap();
     let server = builder.build();
     rn.add_server(server.clone());
 

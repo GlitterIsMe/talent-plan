@@ -1,5 +1,4 @@
 #![feature(integer_atomics)]
-#![deny(clippy::all)]
 // You need to remove these two allows.
 #![allow(dead_code)]
 #![allow(unused_variables)]
@@ -10,7 +9,7 @@ extern crate log;
 #[macro_use]
 extern crate prost_derive;
 
-extern crate random;
+extern crate rand;
 
 mod kvraft;
 mod raft;

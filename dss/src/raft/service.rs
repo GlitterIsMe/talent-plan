@@ -19,16 +19,16 @@ pub struct RequestVoteArgs {
 
     // candidate's term
     #[prost(uint64, tag = "1")]
-    term: u64,
+    pub term: u64,
     // cadidate requesting vote
     #[prost(uint64, tag = "2")]
-    candidateId: u64,
+    pub candidate_id: u64,
     // index of candidate's last log entry
     #[prost(uint64, tag = "3")]
-    lastLogIndex: u64,
+    pub last_log_index: u64,
     // term of candidate's last log entry
     #[prost(uint64, tag = "4")]
-    lastLogTerm: u64,
+    pub last_log_term: u64,
 }
 
 // Example RequestVote RPC reply structure.
@@ -37,35 +37,42 @@ pub struct RequestVoteReply {
     // Your data here (2A).
     // current term, for candidate to update itself
     #[prost(uint64, tag = "1")]
-    term: u64,
+    pub term: u64,
     // candidate recieve vote when it is ture
-    voteGranted: bool,
+    #[prost(bool, tag = "2")]
+    pub vote_granted: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]
 pub struct AppendEntriesArgs {
     // leader's term
     #[prost(uint64, tag = "1")]
-    term: u64,
+    pub term: u64,
     // when client connect to follower
     // then it will be redirected to leader by this id
-    leaderId: u64,
+    #[prost(uint64, tag = "2")]
+    pub leader_id: u64,
     // index of log entry immidiately preceding new ones
-    prevLogIndex: u64,
+    #[prost(uint64, tag = "3")]
+    pub prev_log_index: u64,
     // term of prevLogIndex entry
-    prevLogTerm: u64,
+    #[prost(uint64, tag = "4")]
+    pub prev_log_term: u64,
     // log entry or null for heart beat
-    entries: Option<String>,
+    #[prost(string, tag = "5")]
+    pub entries: String,
     // leader's commit index
-    leaderCommit: u64,
+    #[prost(uint64, tag = "6")]
+    pub leader_commit: u64,
 }
 
-#[derive(CLone, PartialEq, Message)]
+#[derive(Clone, PartialEq, Message)]
 pub struct AppendEntriesReply {
     // current term
     #[prost(uint64, tag = "1")]
-    term: u64,
+    pub term: u64,
     // if follower contained entry
     // matching prevLogIndex and prevLogTerm
-    success: bool,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
 }

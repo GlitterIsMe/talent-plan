@@ -6,7 +6,7 @@ LOG_LEVEL ?= labs6824=info
 
 check:
 	cargo fmt --all
-	cargo clippy --all --tests -- -D clippy::all
+	cargo clippy --all --tests -- -A clippy::all
 
 test: test_others test_2 test_3
 
