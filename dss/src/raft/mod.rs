@@ -1,6 +1,7 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Condvar, Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc, Mutex,
+    mpsc::{channel, Sender}
 };
 use std::{thread, time};
 
@@ -22,6 +23,13 @@ mod tests;
 use self::errors::*;
 use self::persister::*;
 use self::service::*;
+
+macro_rules! myprintln {
+    ($($arg: tt)*) => (
+        //println!("Debug({}:{}): {}", file!(), line!(),
+        //         format_args!($($arg)*));
+    ) 
+}
 
 pub struct ApplyMsg {
     pub command_valid: bool,
@@ -78,6 +86,8 @@ pub struct Raft {
     // Your data here (2A, 2B, 2C).
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
+    role: Role,
+    vote_count: Arc<AtomicUsize>,
 }
 
 impl Raft {
@@ -111,6 +121,8 @@ impl Raft {
             match_index: None,
             leader_id: 0,
             state: Arc::default(),
+            role: Role::FOLLOWER,
+            vote_count: Arc::new(AtomicUsize::new(1)),
         };
 
         // initialize from state persisted before a crash
@@ -170,21 +182,12 @@ impl Raft {
     /// look at the comments in ../labrpc/src/mod.rs for more details.
     fn send_request_vote(&self, server: usize, args: &RequestVoteArgs) -> Result<RequestVoteReply> {
         let peer = &self.peers[server];
-        // Your code here if you want the rpc becomes async.
-        // Example:
-        // ```
-        // let (tx, rx) = channel();
-        // peer.spawn(
-        //     peer.request_vote(&args)
-        //         .map_err(Error::Rpc)
-        //         .then(move |res| {
-        //             tx.send(res);
-        //             OK(())
-        //         }),
-        // );
-        // rx.wait() ...
-        // ```
         peer.request_vote(&args).map_err(Error::Rpc).wait()
+    }
+
+    fn send_append_entries(&self, server: usize, args: &AppendEntriesArgs) -> Result<AppendEntriesReply> {
+        let peer = &self.peers[server];
+        peer.append_entries(&args).map_err(Error::Rpc).wait()
     }
 
     // append_entry
@@ -204,6 +207,124 @@ impl Raft {
         } else {
             Err(Error::NotLeader)
         }
+    }
+
+    fn transfer_state(&mut self, new_role: Role){
+        let old_role = self.role;
+        match new_role{
+            Role::FOLLOWER => {
+                
+                {
+                    myprintln!("{} transfer to follower", self.me);
+                    self.vote_count.store(1, Ordering::SeqCst);
+                    self.role = Role::FOLLOWER;
+                }
+            },
+            Role::CANDIDATE => {
+                {
+                    myprintln!("{} transfer to candidate", self.me);
+                    self.role = Role::CANDIDATE;
+                    self.start_election();
+                }
+            },
+            Role::LEADER => {
+                {
+                    myprintln!("{} transfer to candidate", self.me);
+                    self.role = Role::LEADER;
+                    {
+                        self.state = Arc::new(State{
+                            term: self.state.term(),
+                            is_leader: true,
+                        });
+                        self.leader_id = self.me;
+                        self.vote_for = self.me as i32;
+                    }
+                }
+            },
+        }
+    }
+
+    fn start_election(&mut self){
+        // call request_vote for every sever
+        myprintln!("{} start election", self.me);
+        let mut vote_arg = RequestVoteArgs{
+            term: 0,
+            candidate_id: 0,
+            last_log_index: 0,
+            last_log_term: 0,
+        };
+        let peer_num;
+        let me;
+        {
+            peer_num = self.peers.len();
+            me = self.me;
+            vote_arg.term = self.state.term();
+            vote_arg.candidate_id = me as u64;
+            // increment term
+            self.state = Arc::new(State{
+                term: self.state.term() + 1,
+                is_leader: false,
+            });
+        }
+        for i in 0..peer_num{
+            if i == me as usize {continue;}
+            let vote_count = self.vote_count.clone();
+            let peer = self.peers[i].clone();
+            let args = vote_arg.clone();
+            thread::spawn(move || {
+                //线程里面不能有self
+                myprintln!("request {} for vote", i);
+                let reply = peer.request_vote(&args).map_err(Error::Rpc).wait().unwrap();
+                if reply.vote_granted{
+                    myprintln!("{} for {}", i, me);
+                    vote_count.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    myprintln!("{} got {} votes", me, vote_count.load(Ordering::SeqCst));
+                }
+            });
+        }
+        // each call is a thread
+        // thread communicate by channel
+    }
+
+    fn start_append_entry(&mut self){
+        myprintln!("{} start send heartbeat", self.me);
+        let mut append_args = AppendEntriesArgs{
+            term: 0,
+            leader_id: 0,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: " ".to_string(),
+            leader_commit: 0,
+        };
+        let peer_num;
+        let me;
+        {
+            append_args.term = self.state.term();
+            append_args.leader_id = self.me as u64;
+            peer_num = self.peers.len();
+            me = self.me;
+        }
+        //let (tx, rx) = channel();
+        for i in 0..peer_num{
+            if i == me as usize {continue;}
+            let args = append_args.clone();
+            let peer = self.peers[i].clone();
+            //let tx = tx.clone();
+            thread::spawn(move || {
+                let reply = peer.append_entries(&args).map_err(Error::Rpc).wait().unwrap();
+                //tx.send(reply);
+            });
+        }
+        //drop(tx);
+        /* for reply in rx.iter(){
+            myprintln!("get reply");
+            if reply.term > append_args.term{
+                self.transfer_state(Role::FOLLOWER);
+                break;
+            }
+        } */
+        myprintln!("{} end this heartbeat", self.me);
+
     }
 
     fn peer_num(&self) -> u64 {
@@ -234,12 +355,18 @@ impl Raft {
 // struct Node { sender: Sender<Msg> }
 // ```
 // 通过RPC实现则使用Raft结构，也可以通过多线程+channel的形式实现（当然是选择RPC）
+#[derive(Copy, Clone)]
+enum Role{
+    FOLLOWER = 1,
+    CANDIDATE = 2,
+    LEADER = 3,
+}
+
 #[derive(Clone)]
 pub struct Node {
     raft: Arc<Mutex<Raft>>,
-    need_election: Arc<AtomicBool>,
+    timeout_tx: Sender<u32>,
     shutdown: Arc<AtomicBool>,
-    bg_leader_cv: Arc<(Mutex<bool>, Condvar)>,
     // Your code here.
 }
 
@@ -247,149 +374,66 @@ impl Node {
     /// Create a new raft service.
     pub fn new(raft: Raft) -> Node {
         // Your code here.
+        let (tx, rx) = channel();
         let node = Node {
             raft: Arc::new(Mutex::new(raft)),
-            need_election: Arc::new(AtomicBool::new(true)),
+            timeout_tx: tx,
             shutdown: Arc::new(AtomicBool::new(false)),
-            bg_leader_cv: Arc::new((Mutex::new(false), Condvar::new())),
         };
         //spawn a thread to start a election periodly
-
-        let raft_clone = node.raft.clone();
-        let need_election_1 = node.need_election.clone();
-        let shutdown_1 = node.shutdown.clone();
-        let bg_leader_cv_1 = node.bg_leader_cv.clone();
+        let shutdown = node.shutdown.clone();
+        let raft = node.raft.clone();
         thread::spawn(move || {
-            loop {
-                let rand_time = rand::thread_rng().gen_range(150, 300);
-                let sleep_time = time::Duration::from_micros(rand_time);
-                println!("sleep for {}", rand_time);
-                thread::sleep(sleep_time);
-                if !raft_clone.lock().unwrap().state.is_leader() && need_election_1.load(Ordering::SeqCst) {
-                    let mut raft = raft_clone.lock().unwrap();
-                    println!("{} start election", raft.me);
-                    // launch election
-                    let mut result: Vec<RequestVoteReply> = Vec::new();
-                    let mut skip_count = false;
-                    // ask all other server for vote
-                    let peer_num = raft.peer_num();
-                    println!("total peer num {}", peer_num);
-                    for i in 0..peer_num {
-                        if raft.me == i as usize {
-                            continue;
-                        }
-                        println!("{} request {} for vote", raft.me, i);
-                        if !need_election_1.load(Ordering::SeqCst) {
-                            println!("other peer has become leader");
-                            skip_count = true;
-                            break;
-                        }
-                        let request_vote_arg = RequestVoteArgs {
-                            term: raft.state.term(),
-                            candidate_id: raft.me as u64,
-                            last_log_index: raft.commit_index,
-                            last_log_term: raft.last_applied,
-                        };
-                        if let Ok(reply) = raft.send_request_vote(i as usize, &request_vote_arg){
-                            result.push(reply);
-                            println!("{} get vote from {}", raft.me, i);
-                        }
-                    }
-                    // this peer vote for itself
-                    if !skip_count {
-                        let mut count = 1;
-                        for reply in result {
-                            if reply.vote_granted {
-                                count += 1;
-                            }else{
-                                println!("{} get invalid vote", raft.me);
-                            }
-                        }
-                        if count > (peer_num + 1) / 2 {
-                            // beacome leader and awake the leader thread
-                            println!("{} become leader", raft.me);
-                            raft.state = Arc::new(State {
-                                term: raft.state.term(),
-                                is_leader: true,
-                            });
-                            raft.leader_id = raft.me;
-                            let &(ref mu, ref cv) = &*bg_leader_cv_1;
-                            *mu.lock().unwrap() = true;
-                            cv.notify_one();
-                        }
-                    }
+            loop{
+                let role;{
+                    role = raft.lock().unwrap().role;
                 }
-                if shutdown_1.load(Ordering::SeqCst) {
-                    break;
+                let me;{
+                    me = raft.lock().unwrap().me;
                 }
+                match role{
+                    Role::FOLLOWER => {
+                        // start a timeout and if time out then become candidate
+                        let rand_time = rand::thread_rng().gen_range(200, 500);
+                        myprintln!("{} rand sleep {}", me, rand_time);
+                        match rx.recv_timeout(time::Duration::from_millis(rand_time)){
+                            Ok(_) => {
+                                myprintln!("{} refresh timeout", me);
+                            },
+                            // wait util timeout and transfer to candidate
+                            Err(e) => {
+                                myprintln!("{} transfer to CANDIDATE becaues {:?}", me, e);
+                                raft.lock().unwrap().transfer_state(Role::CANDIDATE);
+                            },
+                        } 
+                    },
+                    Role::CANDIDATE => {
+                        // start an election and request for vote
+                        let peer_num;{
+                            peer_num = raft.lock().unwrap().peer_num();
+                        }
+                        let vote_count;{
+                            vote_count = raft.lock().unwrap().vote_count.clone();
+                        }
+                        //println!("main: got {} vote", vote_count.load(Ordering::SeqCst)); 
+                        if vote_count.load(Ordering::SeqCst) as u64 >= (peer_num + 1) / 2 {
+                            raft.lock().unwrap().transfer_state(Role::LEADER);
+                        }
+                    },
+                    Role::LEADER => {
+                        // send heartbeat periodly
+                        thread::sleep(time::Duration::from_millis(20));
+                        myprintln!("{} start heartbeat", me);
+                        raft.lock().unwrap().start_append_entry();
+                    },
+                } 
+                if shutdown.load(Ordering::SeqCst) {break;}
             }
+        
         });
-
-        let raft_clone = node.raft.clone();
-        let need_election_2 = node.need_election.clone();
-        let shutdown_2 = node.shutdown.clone();
-        let bg_leader_cv_2 = node.bg_leader_cv.clone();
-        thread::spawn(move || {
-            println!("start leader thread");
-            loop {
-                let &(ref mu, ref cv) = &*(bg_leader_cv_2);
-                let mut working = mu.lock().unwrap();
-                while !*working {
-                    // wait for becoming a leader
-                    println!("wait for awake");
-                    working = cv.wait(working).unwrap();
-                }
-                loop {
-                    // become leader
-                    let time = time::Duration::from_micros(100);
-                    // refresh election flag
-                    need_election_2.store(false, Ordering::SeqCst);
-                    thread::sleep(time);
-                    let mut raft = raft_clone.lock().unwrap();
-                    println!("{} become leader", raft.me);
-                    for i in 0..raft.peer_num() {
-                        if i == raft.me as u64 {
-                            continue;
-                        };
-                        println!("send heartbeat to {}", i);
-                        let reply = raft.peers[i as usize]
-                            .append_entries(&AppendEntriesArgs {
-                                term: raft.state.term(),
-                                leader_id: raft.me as u64,
-                                prev_log_index: 0,
-                                prev_log_term: 0,
-                                entries: " ".to_string(),
-                                leader_commit: 0,
-                            })
-                            .wait()
-                            .unwrap();
-                        if !reply.success {
-                            panic!("heartbeat send failed");
-                        }
-                        if reply.term > raft.state.term() {
-                            // back to follower
-                            println!("{} back to follower", raft.me);
-                            raft.state = Arc::new(State {
-                                term: reply.term,
-                                is_leader: false,
-                            });
-                            *working = false;
-                            break;
-                        }
-                    }
-                    if !raft.state.is_leader() {
-                        break;
-                    }
-                    if shutdown_2.load(Ordering::SeqCst) {
-                        break;
-                    }
-                }
-            }
-        });
-
         node
     }
-
+    
     /// the service using Raft (e.g. a k/v server) wants to start
     /// agreement on the next command to be appended to Raft's log. if this
     /// server isn't the leader, returns false. otherwise start the
@@ -431,7 +475,7 @@ impl Node {
         // Example:
         // self.raft.leader_id == self.id
         // unimplemented!()
-        self.raft.lock().unwrap().leader_id == self.raft.lock().unwrap().me
+        self.raft.lock().unwrap().state.is_leader();
     }
 
     /// The current state of this peer.
@@ -453,68 +497,95 @@ impl Node {
     }
 }
 
-/* impl RaftService for Node {
-    // example RequestVote RPC handler.
-    fn request_vote(&self, args: RequestVoteArgs) -> RpcFuture<RequestVoteReply> {
-        // Your code here (2A, 2B).
-        unimplemented!()
-        // 收到别人的request vote调用
-        // 如果当前term还没投票则投票，否则不投票
-    }
-
-    fn append_entries(&self, args: AppendEntriesArg) -> RpcFuture<AppendEntriesApply>{
-
-    }
-} */
 impl RaftService for Node {
     // example RequestVote RPC handler.
     fn request_vote(&self, args: RequestVoteArgs) -> RpcFuture<RequestVoteReply> {
         // Your code here (2A, 2B).
-        println!("get vote req from {}", args.candidate_id);
-        let mut lock = self.raft.try_lock();
+        let me;
+        {
+            me = self.raft.lock().unwrap().me;
+        }
         let mut reply = RequestVoteReply {
             term: 0,
             vote_granted: false,
         };
-        if let Ok(ref mut raft) = lock{
+        self.timeout_tx.send(1);
+        {
+            let mut raft = self.raft.lock().unwrap();
             let term = raft.state.term();
+            myprintln!("{}[term {}] get vote req from {}[term {}]", me, term, args.candidate_id, args.term);
             let vote_for = raft.vote_for;
-            if (args.term >= term) && (vote_for == -1) {
+            if (term < args.term/* < or <=?*/) || ((term == args.term) && (raft.vote_for == -1)){
+                // reset timeout
+                raft.state = Arc::new({
+                    State{
+                        term: args.term,
+                        is_leader: false,
+                    }
+                });
+                // record vote 
+                raft.vote_for = args.candidate_id as i32;
                 reply.term = term;
                 reply.vote_granted = true;
-                raft.vote_for = args.candidate_id as i32;
             }
-            println!("reply vote req for {}", args.candidate_id);
-            Box::new(futures::future::result(Ok(reply)))
-            // 收到别人的request vote调用
-            // 如果当前term还没投票则投票，否则不投票
-        }else{
+            myprintln!("{} reply {}", me, reply.vote_granted);
             Box::new(futures::future::result(Ok(reply)))
         }
-        
     }
 
     fn append_entries(&self, args: AppendEntriesArgs) -> RpcFuture<AppendEntriesReply> {
-        println!("get heartbeat from {}", args.leader_id);
-        let mut raft = self.raft.lock().unwrap();
-        let term = raft.state.term();
+        let me;
+        {
+            me = self.raft.lock().unwrap().me;
+        }
+        myprintln!("{} get heartbeat from {}", me, args.leader_id);
+        self.timeout_tx.send(1);
         let mut reply = AppendEntriesReply {
-            term: term,
+            term: 0,
             success: false,
         };
-        if args.term >= term {
-            // refresh election flag as false
-            self.need_election.store(false, Ordering::SeqCst);
-            raft.leader_id = args.leader_id as usize;
-            if term != args.term {
-                raft.state = Arc::new(State {
-                    term: args.term,
-                    is_leader: false,
-                });
-            }
-            reply.success = true;
+        {
+            let mut raft = self.raft.lock().unwrap();
+            reply.term = raft.state.term();
         }
-        println!("reply for {}", args.leader_id);
+        let role;{
+            role = self.raft.lock().unwrap().role;
+        }
+        match role{
+            Role::FOLLOWER =>{
+                
+            },
+
+            Role::CANDIDATE =>{
+                if args.term >= reply.term{
+                    self.raft.lock().unwrap().transfer_state(Role::FOLLOWER);
+                }
+            },
+
+            Role::LEADER =>{
+                if args.term > reply.term{
+                    self.raft.lock().unwrap().transfer_state(Role::FOLLOWER);
+                }
+            },
+        }
+        if args.term >= reply.term {
+            // refresh election timeout
+            // update leader_id
+            {
+                let mut raft = self.raft.lock().unwrap();
+                if raft.leader_id != args.leader_id as usize {raft.leader_id = args.leader_id as usize};
+                if raft.state.term < args.term {
+                    raft.state = Arc::new(State {
+                        term: args.term,
+                        is_leader: false,
+                    });
+                }
+                reply.success = true;
+            }
+            
+        }
+        myprintln!("reply for {}", args.leader_id);
         Box::new(futures::future::result(Ok(reply)))
+       
     }
 }

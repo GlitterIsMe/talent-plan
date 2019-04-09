@@ -148,11 +148,13 @@ impl Config {
 
             for (i, connected) in self.connected.iter().enumerate() {
                 if *connected {
+                    println!("before get tstate");
                     let state = self.rafts.lock().unwrap()[i]
                         .as_ref()
                         .unwrap()
                         .get_state()
                         .clone();
+                        println!("get tstate");
                     let term = state.term();
                     let is_leader = state.is_leader();
                     if is_leader {
