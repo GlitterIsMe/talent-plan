@@ -88,6 +88,7 @@ pub struct Raft {
     // state a Raft server must maintain.
     role: Role,
     vote_count: Arc<AtomicUsize>,
+    vote_req: Arc<AtomicUsize>,
 }
 
 impl Raft {
@@ -123,6 +124,7 @@ impl Raft {
             state: Arc::default(),
             role: Role::FOLLOWER,
             vote_count: Arc::new(AtomicUsize::new(1)),
+            vote_req: Arc::new(AtomicUsize::new(0)),
         };
 
         // initialize from state persisted before a crash
@@ -229,7 +231,7 @@ impl Raft {
             },
             Role::LEADER => {
                 {
-                    myprintln!("{} transfer to candidate", self.me);
+                    myprintln!("{} transfer to leader", self.me);
                     self.role = Role::LEADER;
                     {
                         self.state = Arc::new(State{
@@ -257,73 +259,95 @@ impl Raft {
         let me;
         {
             peer_num = self.peers.len();
-            me = self.me;
-            vote_arg.term = self.state.term();
-            vote_arg.candidate_id = me as u64;
+            me = self.me; 
             // increment term
             self.state = Arc::new(State{
                 term: self.state.term() + 1,
                 is_leader: false,
             });
+            vote_arg.term = self.state.term();
+            vote_arg.candidate_id = me as u64;
         }
         for i in 0..peer_num{
             if i == me as usize {continue;}
             let vote_count = self.vote_count.clone();
+            let vote_req = self.vote_req.clone();
             let peer = self.peers[i].clone();
             let args = vote_arg.clone();
             thread::spawn(move || {
                 //线程里面不能有self
                 myprintln!("request {} for vote", i);
-                let reply = peer.request_vote(&args).map_err(Error::Rpc).wait().unwrap();
-                if reply.vote_granted{
-                    myprintln!("{} for {}", i, me);
-                    vote_count.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
-                    myprintln!("{} got {} votes", me, vote_count.load(Ordering::SeqCst));
+                match peer.request_vote(&args).map_err(Error::Rpc).wait(){
+                    Ok(reply) =>{
+                        if reply.vote_granted{
+                            //myprintln!("{} for {}", i, me);
+                            vote_count.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                            myprintln!("{} got {} votes", me, vote_count.load(Ordering::SeqCst));
+                        }
+                    },
+                    Err(e) =>{
+                        myprintln!("failed to get vote result because {:?}", e);
+                    },
                 }
+                vote_req.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
             });
         }
         // each call is a thread
         // thread communicate by channel
     }
 
-    fn start_append_entry(&mut self){
+    fn start_append_entry(&mut self, tx: Sender<u32>){
         myprintln!("{} start send heartbeat", self.me);
-        let mut append_args = AppendEntriesArgs{
-            term: 0,
-            leader_id: 0,
-            prev_log_index: 0,
-            prev_log_term: 0,
-            entries: " ".to_string(),
-            leader_commit: 0,
-        };
-        let peer_num;
-        let me;
-        {
-            append_args.term = self.state.term();
-            append_args.leader_id = self.me as u64;
-            peer_num = self.peers.len();
-            me = self.me;
-        }
-        //let (tx, rx) = channel();
-        for i in 0..peer_num{
-            if i == me as usize {continue;}
-            let args = append_args.clone();
-            let peer = self.peers[i].clone();
-            //let tx = tx.clone();
-            thread::spawn(move || {
-                let reply = peer.append_entries(&args).map_err(Error::Rpc).wait().unwrap();
-                //tx.send(reply);
-            });
-        }
-        //drop(tx);
-        /* for reply in rx.iter(){
-            myprintln!("get reply");
-            if reply.term > append_args.term{
-                self.transfer_state(Role::FOLLOWER);
-                break;
-            }
-        } */
-        myprintln!("{} end this heartbeat", self.me);
+        let peer_num = self.peers.len();
+        let me = self.me;
+        let peers = self.peers.clone();
+        let term = self.state.term();
+        thread::spawn(move || {
+            //loop{
+                /* if let Ok(_) = rx.try_recv(){
+                    break;
+                } */
+                let mut append_args = AppendEntriesArgs{
+                    term: 0,
+                    leader_id: 0,
+                    prev_log_index: 0,
+                    prev_log_term: 0,
+                    entries: " ".to_string(),
+                    leader_commit: 0,
+                };
+                
+                append_args.term = term;
+                append_args.leader_id = me as u64; 
+                //let (tx, rx) = channel();
+                for i in 0..peer_num{
+                    if i == me as usize {continue;}
+                    let args = append_args.clone();
+                    let peer = peers[i].clone();
+                    //let tx = tx.clone();
+                    thread::spawn(move || {
+                        match peer.append_entries(&args).map_err(Error::Rpc).wait(){
+                            Ok(_) => {
+
+                            },
+                            Err(e) => {
+                                myprintln!("append failed because {:?}", e);                            },
+                        }
+                    //tx.send(reply);
+                    });
+                }
+                tx.send(1).unwrap();
+            //drop(tx);
+            /* for reply in rx.iter(){
+                myprintln!("get reply");
+                if reply.term > append_args.term{
+                    self.transfer_state(Role::FOLLOWER);
+                    break;
+                }
+            } */
+            myprintln!("{} end this heartbeat", me);
+            //}
+        });
+        
 
     }
 
@@ -415,16 +439,26 @@ impl Node {
                         let vote_count;{
                             vote_count = raft.lock().unwrap().vote_count.clone();
                         }
+                        let vote_req;{
+                            vote_req = raft.lock().unwrap().vote_req.clone();
+                        }
                         //println!("main: got {} vote", vote_count.load(Ordering::SeqCst)); 
+                        if (vote_req.load(Ordering::SeqCst) as u64 == (peer_num - 1)) &&
+                           ((vote_count.load(Ordering::SeqCst) as u64) < (peer_num + 1) / 2){
+                            // finish all the vote req and vote is not enough
+                            raft.lock().unwrap().transfer_state(Role::FOLLOWER);
+                        }
                         if vote_count.load(Ordering::SeqCst) as u64 >= (peer_num + 1) / 2 {
                             raft.lock().unwrap().transfer_state(Role::LEADER);
                         }
                     },
                     Role::LEADER => {
                         // send heartbeat periodly
+                        let (tx, rx) = channel();
                         thread::sleep(time::Duration::from_millis(20));
                         myprintln!("{} start heartbeat", me);
-                        raft.lock().unwrap().start_append_entry();
+                        raft.lock().unwrap().start_append_entry(tx);
+                        rx.recv().unwrap();
                     },
                 } 
                 if shutdown.load(Ordering::SeqCst) {break;}
@@ -475,7 +509,7 @@ impl Node {
         // Example:
         // self.raft.leader_id == self.id
         // unimplemented!()
-        self.raft.lock().unwrap().state.is_leader();
+        self.raft.lock().unwrap().state.is_leader()
     }
 
     /// The current state of this peer.
@@ -509,7 +543,7 @@ impl RaftService for Node {
             term: 0,
             vote_granted: false,
         };
-        self.timeout_tx.send(1);
+        self.timeout_tx.send(1).unwrap();
         {
             let mut raft = self.raft.lock().unwrap();
             let term = raft.state.term();
@@ -539,13 +573,13 @@ impl RaftService for Node {
             me = self.raft.lock().unwrap().me;
         }
         myprintln!("{} get heartbeat from {}", me, args.leader_id);
-        self.timeout_tx.send(1);
+        self.timeout_tx.send(1).unwrap();
         let mut reply = AppendEntriesReply {
             term: 0,
             success: false,
         };
         {
-            let mut raft = self.raft.lock().unwrap();
+            let raft = self.raft.lock().unwrap();
             reply.term = raft.state.term();
         }
         let role;{

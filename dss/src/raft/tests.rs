@@ -31,15 +31,15 @@ fn test_initial_election_2a() {
     cfg.begin("Test (2A): initial election");
 
     // is a leader elected?
-    println!("start check one leader");
+    //println!("start check one leader");
     cfg.check_one_leader();
-    println!("after check one leader");
+    //println!("after check one leader");
 
     // sleep a bit to avoid racing with followers learning of the
     // election, then check that all peers agree on the term.
     thread::sleep(Duration::from_millis(50));
     let term1 = cfg.check_terms();
-    println!("after check term");
+    //println!("after check term");
 
     // does the leader+term stay the same if there is no network failure?
     thread::sleep(2 * RAFT_ELECTION_TIMEOUT);
@@ -50,7 +50,7 @@ fn test_initial_election_2a() {
 
     // there should still be a leader.
     cfg.check_one_leader();
-    println!("after check one leader2");
+    //println!("after check one leader2");
 
     cfg.end();
 }
