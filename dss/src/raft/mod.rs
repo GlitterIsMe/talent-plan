@@ -27,7 +27,7 @@ use self::service::*;
 macro_rules! myprintln {
     ($($arg: tt)*) => (
         //println!("Debug({}:{}): {}", file!(), line!(),
-        //         format_args!($($arg)*));
+         //        format_args!($($arg)*));
     ) 
 }
 
@@ -296,12 +296,13 @@ impl Raft {
         // thread communicate by channel
     }
 
-    fn start_append_entry(&mut self, tx: Sender<u32>){
+    fn start_append_entry(&mut self, finish_append: Sender<u32>){
         myprintln!("{} start send heartbeat", self.me);
         let peer_num = self.peers.len();
         let me = self.me;
         let peers = self.peers.clone();
         let term = self.state.term();
+        let (tx, rx) = channel();
         thread::spawn(move || {
             //loop{
                 /* if let Ok(_) = rx.try_recv(){
@@ -318,37 +319,37 @@ impl Raft {
                 
                 append_args.term = term;
                 append_args.leader_id = me as u64; 
-                //let (tx, rx) = channel();
+                
                 for i in 0..peer_num{
                     if i == me as usize {continue;}
                     let args = append_args.clone();
                     let peer = peers[i].clone();
-                    //let tx = tx.clone();
+                    let tx = tx.clone();
                     thread::spawn(move || {
                         match peer.append_entries(&args).map_err(Error::Rpc).wait(){
-                            Ok(_) => {
-
+                            Ok(reply) => {
+                                tx.send(reply);
                             },
                             Err(e) => {
-                                myprintln!("append failed because {:?}", e);                            },
+                                myprintln!("append failed because {:?}", e);                            
+                            },
                         }
-                    //tx.send(reply);
                     });
                 }
-                tx.send(1).unwrap();
+                drop(tx);
+                //tx.send(1).unwrap();
             //drop(tx);
-            /* for reply in rx.iter(){
-                myprintln!("get reply");
-                if reply.term > append_args.term{
-                    self.transfer_state(Role::FOLLOWER);
-                    break;
-                }
-            } */
-            myprintln!("{} end this heartbeat", me);
-            //}
         });
-        
-
+        //drop(tx);
+        for reply in rx.try_iter(){
+            myprintln!("get reply");
+            if reply.term > term{
+                self.transfer_state(Role::FOLLOWER);
+                break;
+            }
+        }
+        finish_append.send(1).unwrap();
+        myprintln!("{} end this heartbeat", me);
     }
 
     fn peer_num(&self) -> u64 {
