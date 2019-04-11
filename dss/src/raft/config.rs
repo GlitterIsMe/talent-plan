@@ -37,6 +37,7 @@ impl Storage {
         let mut count = 0;
         let mut cmd = None;
         for log in &self.logs {
+            //println!("storage log get{}",index);
             let cmd1 = log.get(&index).cloned();
             if cmd1.is_some() {
                 if count > 0 && cmd != cmd1 {
@@ -49,6 +50,7 @@ impl Storage {
                 cmd = cmd1;
             }
         }
+        //println!("{:?}", cmd);
         (count, cmd)
     }
 }
@@ -386,9 +388,11 @@ impl Config {
                 }
                 match labcodec::decode(&cmd.command) {
                     Ok(entry) => {
+                        println!("receive applied entry{:?} index is {}", entry, cmd.command_index);
                         let mut s = storage.lock().unwrap();
                         for (j, log) in s.logs.iter().enumerate() {
                             if let Some(old) = log.get(&cmd.command_index) {
+                                println!("old entry {:?}", *old);
                                 if *old != entry {
                                     // some server has already committed a different value for this entry!
                                     panic!(
