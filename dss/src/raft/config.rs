@@ -388,11 +388,11 @@ impl Config {
                 }
                 match labcodec::decode(&cmd.command) {
                     Ok(entry) => {
-                        println!("receive applied entry{:?} index is {}", entry, cmd.command_index);
+                        //println!("receive applied entry{:?} index is {}", entry, cmd.command_index);
                         let mut s = storage.lock().unwrap();
                         for (j, log) in s.logs.iter().enumerate() {
                             if let Some(old) = log.get(&cmd.command_index) {
-                                println!("old entry {:?}", *old);
+                                //println!("old entry {:?}", *old);
                                 if *old != entry {
                                     // some server has already committed a different value for this entry!
                                     panic!(

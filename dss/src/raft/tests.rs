@@ -89,7 +89,7 @@ fn test_reelection_2a() {
     cfg.end();
 }
 
-#[test]
+/* #[test]
 fn test_basic_agree_2b() {
     let servers = 5;
     let mut cfg = Config::new(servers, false);
@@ -109,9 +109,9 @@ fn test_basic_agree_2b() {
     }
 
     cfg.end()
-}
+} */
 
-/* #[test]
+#[test]
 fn test_fail_agree_2b() {
     let servers = 3;
     let mut cfg = Config::new(servers, false);
@@ -119,6 +119,7 @@ fn test_fail_agree_2b() {
     cfg.begin("Test (2B): agreement despite follower disconnection");
 
     cfg.one(Entry { x: 101 }, servers, false);
+    println!("finish one 101");
 
     // follower network disconnection
     let leader = cfg.check_one_leader();
@@ -140,7 +141,7 @@ fn test_fail_agree_2b() {
     cfg.one(Entry { x: 107 }, servers, true);
 
     cfg.end();
-} */
+}
 
 /* #[test]
 fn test_fail_no_agree_2b() {
