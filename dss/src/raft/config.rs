@@ -402,22 +402,11 @@ impl Config {
                                 }
                             }
                         }
-                        let log = s.logs.get_mut(i);
-                        if let Some(log) = log {
-                            log.insert(cmd.command_index, entry);
-                        }else{
+                        let log = &mut s.logs[i];
+                        if cmd.command_index > 1 && log.get(&(cmd.command_index - 1)).is_none() {
                             panic!("server {} apply out of order {}", i, cmd.command_index);
                         }
-                        /* if cmd.command_index > 1 {
-                            //get the log of this peer
-                            let log = s.logs.get_mut(i - 1);
-                            if let Some(log) = log {
-                                // insert log
-                                log.insert(cmd.command_index, entry);
-                            } else {
-                                panic!("server {} apply out of order {}", i, cmd.command_index);
-                            }
-                        } */
+                        log.insert(cmd.command_index, entry);
                         if cmd.command_index > s.max_index {
                             s.max_index = cmd.command_index;
                         }
