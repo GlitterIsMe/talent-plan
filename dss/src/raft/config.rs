@@ -156,7 +156,7 @@ impl Config {
                         .unwrap()
                         .get_state()
                         .clone();
-                        //println!("get tstate");
+                    //println!("get tstate");
                     let term = state.term();
                     let is_leader = state.is_leader();
                     if is_leader {
@@ -388,7 +388,10 @@ impl Config {
                 }
                 match labcodec::decode(&cmd.command) {
                     Ok(entry) => {
-                        println!("receive applied entry{:?} index is {}", entry, cmd.command_index);
+                        println!(
+                            "receive applied entry{:?} index is {}",
+                            entry, cmd.command_index
+                        );
                         let mut s = storage.lock().unwrap();
                         for (j, log) in s.logs.iter().enumerate() {
                             if let Some(old) = log.get(&cmd.command_index) {
@@ -405,7 +408,7 @@ impl Config {
                         let log = s.logs.get_mut(i);
                         if let Some(log) = log {
                             log.insert(cmd.command_index, entry);
-                        }else{
+                        } else {
                             panic!("server {} apply out of order {}", i, cmd.command_index);
                         }
                         /* if cmd.command_index > 1 {
