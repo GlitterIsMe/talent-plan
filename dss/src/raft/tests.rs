@@ -89,8 +89,9 @@ fn test_reelection_2a() {
     cfg.end();
 }
 
-/* #[test]
+#[test]
 fn test_basic_agree_2b() {
+    println!("basic agree");
     let servers = 5;
     let mut cfg = Config::new(servers, false);
     cfg.begin("Test (2B): basic agreement");
@@ -103,13 +104,14 @@ fn test_basic_agree_2b() {
         }
 
         let xindex = cfg.one(Entry { x: index * 100 }, servers, false);
+        println!("after put an entry");
         if xindex != index {
             panic!("got index {} but expected {}", xindex, index);
         }
     }
 
     cfg.end()
-} */
+}
 
 #[test]
 fn test_fail_agree_2b() {
@@ -143,7 +145,7 @@ fn test_fail_agree_2b() {
     cfg.end();
 }
 
-/* #[test]
+#[test]
 fn test_fail_no_agree_2b() {
     let servers = 5;
     let mut cfg = Config::new(servers, false);
@@ -193,9 +195,9 @@ fn test_fail_no_agree_2b() {
     cfg.one(Entry { x: 1000 }, servers, true);
 
     cfg.end();
-} */
+}
 
-/* #[test]
+#[test]
 fn test_concurrent_starts_2b() {
     let servers = 3;
     let mut cfg = Config::new(servers, false);
@@ -283,9 +285,10 @@ fn test_concurrent_starts_2b() {
     assert!(success, "term changed too often");
 
     cfg.end();
-} */
+}
 
-/* #[test]
+
+#[test]
 fn test_rejoin_2b() {
     let servers = 3;
     let mut cfg = Config::new(servers, false);
@@ -297,6 +300,7 @@ fn test_rejoin_2b() {
     // leader network failure
     let leader1 = cfg.check_one_leader();
     cfg.disconnect(leader1);
+    println!("disconnect {}", leader1);
 
     // make old leader try to agree on some entries
     let _ = cfg.rafts.lock().unwrap()[leader1]
@@ -318,21 +322,26 @@ fn test_rejoin_2b() {
     // new leader network failure
     let leader2 = cfg.check_one_leader();
     cfg.disconnect(leader2);
+    println!("disconnect {}", leader2);
 
     // old leader connected again
     cfg.connect(leader1);
+    println!("connect {}", leader1);
 
     cfg.one(Entry { x: 104 }, 2, true);
 
     // all together now
     cfg.connect(leader2);
+    println!("connect {}", leader2);
 
     cfg.one(Entry { x: 105 }, servers, true);
 
     cfg.end();
-} */
+}
 
-/* #[test]
+
+
+#[test]
 fn test_backup_2b() {
     let servers = 5;
     let mut cfg = Config::new(servers, false);
@@ -350,6 +359,7 @@ fn test_backup_2b() {
 
     // submit lots of commands that won't commit
     for _i in 0..50 {
+        println!("put {}", _i);
         let _ = cfg.rafts.lock().unwrap()[leader1]
             .as_ref()
             .unwrap()
@@ -368,6 +378,7 @@ fn test_backup_2b() {
 
     // lots of successful commands to new group.
     for _i in 0..50 {
+        println!("put {}", _i + 100);
         cfg.one(random_entry(&mut random), 3, true);
     }
 
@@ -381,6 +392,7 @@ fn test_backup_2b() {
 
     // lots more commands that won't commit
     for _i in 0..50 {
+        println!("put {}", _i + 200);
         let _ = cfg.rafts.lock().unwrap()[leader2]
             .as_ref()
             .unwrap()
@@ -399,6 +411,7 @@ fn test_backup_2b() {
 
     // lots of successful commands to new group.
     for _i in 0..50 {
+        println!("put {}", _i + 300);
         cfg.one(random_entry(&mut random), 3, true);
     }
 
@@ -409,9 +422,11 @@ fn test_backup_2b() {
     cfg.one(random_entry(&mut random), servers, true);
 
     cfg.end();
-} */
+} 
 
-/* #[test]
+
+
+/*#[test]
 fn test_count_2b() {
     const SERVERS: usize = 3;
     fn rpcs(cfg: &Config) -> usize {
@@ -539,7 +554,7 @@ fn test_count_2b() {
     }
     cfg.end();
 } */
-
+/*
 #[test]
 fn test_persist1_2c() {
     let servers = 3;
@@ -551,13 +566,14 @@ fn test_persist1_2c() {
 
     // crash and re-start all
     for i in 0..servers {
+        println!("crash {}", i);
         cfg.start1(i);
     }
     for i in 0..servers {
         cfg.disconnect(i);
         cfg.connect(i);
     }
-
+    println!("restart all");
     cfg.one(Entry { x: 12 }, servers, true);
 
     let leader1 = cfg.check_one_leader();
@@ -585,7 +601,7 @@ fn test_persist1_2c() {
 
     cfg.end();
 }
-
+*/
 #[test]
 fn test_persist2_2c() {
     let servers = 5;
@@ -602,6 +618,7 @@ fn test_persist2_2c() {
 
         cfg.disconnect((leader1 + 1) % servers);
         cfg.disconnect((leader1 + 2) % servers);
+        println!("disconnect {} and {}", (leader1 + 1) % servers, (leader1 + 2) % servers);
 
         cfg.one(Entry { x: 10 + index }, servers - 2, true);
         index += 1;
@@ -609,22 +626,26 @@ fn test_persist2_2c() {
         cfg.disconnect((leader1 + 0) % servers);
         cfg.disconnect((leader1 + 3) % servers);
         cfg.disconnect((leader1 + 4) % servers);
+        println!("disconnect {} and {} and {}", (leader1 + 0) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers);
 
         cfg.start1((leader1 + 1) % servers);
         cfg.start1((leader1 + 2) % servers);
         cfg.connect((leader1 + 1) % servers);
         cfg.connect((leader1 + 2) % servers);
+        println!("connect {} and {}", (leader1 + 1) % servers, (leader1 + 2) % servers);
 
         thread::sleep(RAFT_ELECTION_TIMEOUT);
 
         cfg.start1((leader1 + 3) % servers);
         cfg.connect((leader1 + 3) % servers);
+        println!("disconnect {}", (leader1 + 3) % servers);
 
         cfg.one(Entry { x: 10 + index }, servers - 2, true);
         index += 1;
 
         cfg.connect((leader1 + 4) % servers);
         cfg.connect((leader1 + 0) % servers);
+        println!("connect {} and {}", (leader1 + 4) % servers, (leader1 + 0) % servers);
     }
 
     cfg.one(Entry { x: 1000 }, servers, true);
@@ -632,6 +653,8 @@ fn test_persist2_2c() {
     cfg.end();
 }
 
+
+/*
 #[test]
 fn test_persist3_2c() {
     let servers = 3;
@@ -661,6 +684,7 @@ fn test_persist3_2c() {
 
     cfg.end();
 }
+*/
 
 // Test the scenarios described in Figure 8 of the extended Raft paper. Each
 // iteration asks a leader, if there is one, to insert a command in the Raft
@@ -670,6 +694,8 @@ fn test_persist3_2c() {
 // alive servers isn't enough to form a majority, perhaps start a new server.
 // The leader in a new term may try to finish replicating log entries that
 // haven't been committed yet.
+
+/*
 #[test]
 fn test_figure_8_2c() {
     let servers = 5;
@@ -728,7 +754,9 @@ fn test_figure_8_2c() {
 
     cfg.end();
 }
+*/
 
+/*
 #[test]
 fn test_unreliable_agree_2c() {
     let servers = 5;
@@ -767,7 +795,9 @@ fn test_unreliable_agree_2c() {
 
     cfg.end();
 }
+*/
 
+/*
 #[test]
 fn test_figure_8_unreliable_2c() {
     let servers = 5;
@@ -843,6 +873,7 @@ fn test_figure_8_unreliable_2c() {
 
     cfg.end();
 }
+*/
 
 fn internal_churn(unreliable: bool) {
     let servers = 5;
@@ -996,12 +1027,17 @@ fn internal_churn(unreliable: bool) {
     cfg.end()
 }
 
+/*
 #[test]
 fn test_reliable_churn_2c() {
     internal_churn(false);
 }
 
+*/
+
+/*
 #[test]
 fn test_unreliable_churn_2c() {
     internal_churn(true);
 }
+*/

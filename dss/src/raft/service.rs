@@ -61,8 +61,11 @@ pub struct AppendEntriesArgs {
     // log entry or null for heart beat
     #[prost(bytes, tag = "5")]
     pub entries: Vec<u8>,
-    // leader's commit index
+    // entry's term
     #[prost(uint64, tag = "6")]
+    pub entry_term: u64,
+    // leader's commit index
+    #[prost(uint64, tag = "7")]
     pub leader_commit: u64,
 }
 

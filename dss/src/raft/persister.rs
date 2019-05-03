@@ -62,6 +62,7 @@ impl SimplePersister {
 impl Persister for SimplePersister {
     fn save_raft_state(&self, state: Vec<u8>) {
         self.states.lock().unwrap().0 = state;
+        //println!("simple persister save {} bytes", self.states.lock().unwrap().0.len());
     }
 
     fn raft_state(&self) -> Vec<u8> {

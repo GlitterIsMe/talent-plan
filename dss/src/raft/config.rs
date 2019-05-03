@@ -388,7 +388,7 @@ impl Config {
                 }
                 match labcodec::decode(&cmd.command) {
                     Ok(entry) => {
-                        //println!("receive applied entry{:?} index is {}", entry, cmd.command_index);
+                        println!("receive applied entry{:?} index is {}", entry, cmd.command_index);
                         let mut s = storage.lock().unwrap();
                         for (j, log) in s.logs.iter().enumerate() {
                             if let Some(old) = log.get(&cmd.command_index) {
@@ -441,6 +441,8 @@ impl Config {
         // but copy old persister's content so that we always
         // pass Make() the last persisted state.
         let p = SimplePersister::new();
+        //println!("persister save {} bytes", self.saved[i].raft_state().len());
+        // 此时还没有存储数据
         p.save_raft_state(self.saved[i].raft_state());
         self.saved[i] = Arc::new(p);
 
