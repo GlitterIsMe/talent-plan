@@ -2,6 +2,7 @@ extern crate labcodec;
 extern crate prost_derive;
 #[macro_use]
 extern crate labrpc;
+extern crate chrono;
 
 // After you finish the implementation, `#[allow(unused)]` should be removed.
 #[allow(dead_code, unused)]

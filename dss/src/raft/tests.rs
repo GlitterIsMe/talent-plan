@@ -197,6 +197,7 @@ fn test_fail_no_agree_2b() {
     cfg.end();
 }
 
+/*
 #[test]
 fn test_concurrent_starts_2b() {
     let servers = 3;
@@ -286,8 +287,8 @@ fn test_concurrent_starts_2b() {
 
     cfg.end();
 }
-
-
+*/
+/*
 #[test]
 fn test_rejoin_2b() {
     let servers = 3;
@@ -338,9 +339,9 @@ fn test_rejoin_2b() {
 
     cfg.end();
 }
+*/
 
-
-
+/*
 #[test]
 fn test_backup_2b() {
     let servers = 5;
@@ -423,7 +424,7 @@ fn test_backup_2b() {
 
     cfg.end();
 } 
-
+*/
 
 
 /*#[test]

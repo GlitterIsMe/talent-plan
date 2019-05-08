@@ -111,7 +111,7 @@ fn test_get_timestamp_under_unreliable_network() {
     rn.enable("tso2", true);
 
     for child in children {
-        let _ = child.join();
+        let _ = child.join().unwrap();
     }
 }
 
@@ -121,20 +121,24 @@ fn test_predicate_many_preceders_read_predicates() {
     let (_, clients, _) = init(3);
 
     let mut client0 = clients[0].to_owned();
+    // client0写两条数据，正常提交
     client0.begin();
     client0.set(b"1".to_vec(), b"10".to_vec());
     client0.set(b"2".to_vec(), b"20".to_vec());
     assert_eq!(client0.commit(), Ok(true));
 
     let mut client1 = clients[1].to_owned();
+    // client1读数据
     client1.begin();
     assert_eq!(client1.get(b"3".to_vec()), Ok(Vec::new()));
 
     let mut client2 = clients[2].to_owned();
+    // client2在1的读过程中写一条数据，但是client1的事务还没结束
     client2.begin();
     client2.set(b"3".to_vec(), b"30".to_vec());
     assert_eq!(client2.commit(), Ok(true));
 
+    // 此时client1不能读到2写入的数据
     assert_eq!(client1.get(b"3".to_vec()), Ok(Vec::new()));
 }
 
@@ -148,20 +152,25 @@ fn test_predicate_many_preceders_write_predicates() {
     client0.set(b"1".to_vec(), b"10".to_vec());
     client0.set(b"2".to_vec(), b"20".to_vec());
     assert_eq!(client0.commit(), Ok(true));
+    //0提交一个事务
 
     let mut client1 = clients[1].to_owned();
     client1.begin();
-
+    // 1开始一个事务
     let mut client2 = clients[2].to_owned();
     client2.begin();
+    // 2开始一个事务
 
     client1.set(b"1".to_vec(), b"20".to_vec());
     client1.set(b"2".to_vec(), b"30".to_vec());
     assert_eq!(client1.get(b"2".to_vec()), Ok(b"20".to_vec()));
-
+    // 1写数据
     client2.set(b"2".to_vec(), b"40".to_vec());
+    // 2写数据
     assert_eq!(client1.commit(), Ok(true));
+    // 1提交成功
     assert_eq!(client2.commit(), Ok(false));
+    // 2提交失败
 }
 
 #[test]
@@ -174,20 +183,26 @@ fn test_lost_update() {
     client0.set(b"1".to_vec(), b"10".to_vec());
     client0.set(b"2".to_vec(), b"20".to_vec());
     assert_eq!(client0.commit(), Ok(true));
+    // 0结束一个事务
 
     let mut client1 = clients[1].to_owned();
     client1.begin();
+    // 1开始
 
     let mut client2 = clients[2].to_owned();
     client2.begin();
+    // 2开始
 
     assert_eq!(client1.get(b"1".to_vec()), Ok(b"10".to_vec()));
     assert_eq!(client2.get(b"1".to_vec()), Ok(b"10".to_vec()));
+    // 12同时get 0写的数据
 
     client1.set(b"1".to_vec(), b"11".to_vec());
     client2.set(b"1".to_vec(), b"11".to_vec());
+    // 12同时修改12的数据
     assert_eq!(client1.commit(), Ok(true));
     assert_eq!(client2.commit(), Ok(false));
+    //1能提交成功，2不能
 }
 
 #[test]
@@ -400,6 +415,7 @@ fn test_commit_primary_fail() {
     hook.drop_req.store(true, Ordering::Relaxed);
     hook.fail_primary.store(true, Ordering::Relaxed);
     assert_eq!(client0.commit(), Ok(false));
+    // 都是连接错误我怎么知道有没有提交成功然后该返回哪个？？
 
     let mut client1 = clients[1].to_owned();
     client1.begin();
