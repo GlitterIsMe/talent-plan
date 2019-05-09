@@ -728,11 +728,11 @@ impl Node {
                         }
                     }
                     Role::LEADER => {
-                        thread::sleep(time::Duration::from_millis(50));
                         //myprintln!("{} start heartbeat", me);
                         if raft.lock().unwrap().role == Role::LEADER {
                             Node::start_append_entry(raft.clone());
                         }
+                        thread::sleep(time::Duration::from_millis(50));
                     }
                 }
                 raft.lock().unwrap().apply_log();
