@@ -133,6 +133,7 @@ pub struct Raft {
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
     role: Role,
+    //vote_count: Arc<AtomicUsize>,
 }
 
 impl Raft {
@@ -170,6 +171,7 @@ impl Raft {
             leader_id: 0,
             state: Arc::default(),
             role: Role::FOLLOWER,
+            //vote_count: Arc::new(AtomicUsize::new()),
         };
 
         // initialize from state persisted before a crash
@@ -223,18 +225,6 @@ impl Raft {
             self.log.push(entry);
             self.last_index += 1;
         }
-
-        // Your code here (2C).
-        // Example:
-        // match labcodec::decode(data) {
-        //     Ok(o) => {
-        //         self.xxx = o.xxx;
-        //         self.yyy = o.yyy;
-        //     }
-        //     Err(e) => {
-        //         panic!("{:?}", e);
-        //     }
-        // }
     }
 
     /// example code to send a RequestVote RPC to a server.
@@ -254,9 +244,41 @@ impl Raft {
     /// is no need to implement your own timeouts around this method.
     ///
     /// look at the comments in ../labrpc/src/mod.rs for more details.
-    fn send_request_vote(&self, server: usize, args: &RequestVoteArgs) -> Result<RequestVoteReply> {
+    fn send_request_vote(&mut self, server: usize, args: &RequestVoteArgs, sender: Sender<i32>)-> Result<RequestVoteReply> {
         let peer = &self.peers[server];
         peer.request_vote(&args).map_err(Error::Rpc).wait()
+        /*let (tx, rx) = channel();
+        peer.spawn(
+             peer.request_vote(&args)
+                 .map_err(Error::Rpc)
+                 .then(move |reply| {
+                     match reply{
+                         Ok(reply) => {
+                             if reply.term > self.state.term() {
+                                 myprintln!("get a larger term {} form vote reply and update from {}", reply.term, self.state.term());
+                                 self.update_term_to(reply.term);
+                             } else if reply.vote_granted {
+                                 if self.role == Role::LEADER {
+                                     return;
+                                 }
+                                 self.vote_count.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                                 myprintln!("{} got {} votes", self.me, self.vote_count.load(Ordering::SeqCst));
+                                 if self.vote_count.load(Ordering::SeqCst) > peer_num / 2 {
+                                     myprintln!("receive majority vote {} and become leader", self.vote_count.load(Ordering::SeqCst));
+                                     sender.send(1).unwrap();
+                                 }
+                             }
+                         }
+                         Err(e) => {
+                             myprintln!("failed to get vote result because {:?}", e);
+                         }
+                     }
+                     //tx.send(res);
+                     tx.send(1);
+                     Ok(())
+                 }),
+         );
+         rx.wait();*/
     }
 
     fn send_append_entries(
@@ -305,6 +327,7 @@ impl Raft {
             term,
             is_leader: false,
         });
+        self.transfer_state(Role::FOLLOWER);
         self.persist();
     }
 
@@ -347,188 +370,6 @@ impl Raft {
         }
         self.persist();
     }
-
-    /*   fn start_election(&mut self, sender: Sender<i32>) {
-        // call request_vote for every sever
-        myprintln!("{} start election", self.me);
-        
-        let peer_num;
-        let me;
-        {
-            peer_num = self.peers.len();
-            me = self.me;
-            // increment term
-            self.state = Arc::new(State {
-                term: self.state.term() + 1,
-                is_leader: false,
-            });
-        }
-        let vote_arg = RequestVoteArgs {
-            term: self.state.term(),
-            candidate_id: self.me as u64,
-            last_log_index: self.last_index,
-            last_log_term: self.log[self.last_index as usize].term,
-        };
-        for i in 0..peer_num {
-            if i == me as usize {
-                continue;
-            }
-            let vote_count = self.vote_count.clone();
-            //let vote_req = self.vote_req.clone();
-            let peer = self.peers[i].clone();
-            let args = vote_arg.clone();
-            let sender = sender.clone();
-            thread::spawn(move || {
-                //self cannot be involved in thread::spawn!!!!!
-                myprintln!("request {} for vote", i);
-                match peer.request_vote(&args).map_err(Error::Rpc).wait() {
-                    Ok(reply) => {
-                        if reply.vote_granted {
-                            vote_count.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
-                            myprintln!("{} got {} votes", me, vote_count.load(Ordering::SeqCst));
-                            if vote_count.load(Ordering::SeqCst) > peer_num / 2{
-                                myprintln!("receive majority vote {} and become leader", vote_count.load(Ordering::SeqCst));
-                                sender.send(1);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        myprintln!("failed to get vote result because {:?}", e);
-                    }
-                }
-                //vote_req.store(vote_count.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
-            });
-        }
-        // each call is a thread
-        // thread communicate by channel
-    }
-    */
-
-    /* fn start_append_entry(&mut self /*, finish_append: Sender<u32>*/) {
-        myprintln!(
-            "{} start append entry call, term[{}]",
-            self.me,
-            self.state.term()
-        );
-        let reply_server = Arc::new(AtomicUsize::new(1));
-        for i in 0..self.peers.len() {
-            if i == self.me as usize {
-                continue;
-            }
-            {
-                // if this peer is not leader anymore stop this append
-                if self.role != Role::LEADER {
-                    return;
-                }
-            }
-            // cunstruct an arg
-            myprintln!("last index is {}", self.last_index);
-            let mut index_i = 0;
-            let append_args = AppendEntriesArgs {
-                term: self.state.term(), // term is the now term of leader
-                leader_id: self.me as u64,
-                prev_log_index: if self.last_index == 0{
-                                    0
-                                }else{
-                                    self.last_index - 1
-                                }, // prev log index is the prev of newest one entry
-                prev_log_term: if self.last_index == 0{
-                                    0 // if there is no entry then term is 0
-                                } else {
-                                    myprintln!(
-                                        "got prev log[{}] term {}",
-                                        self.last_index - 1,
-                                        self.log[(self.last_index - 1) as usize].term
-                                    );
-                                    self.log[(self.last_index - 1) as usize].term // or term is the term of last entry
-                                },
-                entries: if let Some(index) = &self.next_index {
-                            let index = *(index[i].lock().unwrap());
-                            index_i = index;
-                            myprintln!("{} next index is {}", i, index);
-                            if index == self.last_index + 1 {
-                                // next index of this server is the newest, then send heartbeat
-                                myprintln!("{} start heartbeat", self.me);
-                                vec![]
-                            } else {
-                                // or send the corresponding entry
-                                self.sent_log = true;
-                                myprintln!("{} start append entry", self.me);
-                                self.log[index as usize].entry.clone()
-                            }
-                        } else {
-                            myprintln!("{} start hearbeat", self.me);
-                            vec![]
-                        },
-                leader_commit: self.commit_index.load(Ordering::SeqCst) as u64, // index of leader has commited
-            };
-
-            let peer = self.peers[i].clone();
-            //let tx = tx.clone();
-            let next_inedx_i = if let Some(index) = &self.next_index {
-                index[i].clone()
-            } else {
-                Arc::new(Mutex::new(0))
-            };
-            let match_index_i = if let Some(index) = &self.match_index {
-                index[i].clone()
-            } else {
-                Arc::new(Mutex::new(0))
-            };
-            let peer_num = self.peer_num();
-            let reply_server = reply_server.clone();
-            let commit_index = self.commit_index.clone();
-            let last_index = self.last_index;
-            let next_role = self.next_role.clone();
-            let me = self.me;
-            thread::spawn(move || {
-                match peer.append_entries(&append_args).map_err(Error::Rpc).wait() {
-                    Ok(reply) => {
-                        if reply.term > append_args.term{
-                            myprintln!("{} become follower because term", me);
-                            *next_role.lock().unwrap() = Role::FOLLOWER;
-                        }
-                        if reply.success && append_args.entries.len() > 0 {
-                            // majority of server has reply success
-                            reply_server
-                                .store(reply_server.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
-                            myprintln!("got {} success reply", reply_server.load(Ordering::SeqCst));
-                            if reply_server.load(Ordering::SeqCst) > (peer_num / 2) as usize {
-                                commit_index.store(last_index as usize, Ordering::SeqCst);
-                                myprintln!(
-                                    "Get majority of replication and commit index update to {}",
-                                    commit_index.load(Ordering::SeqCst)
-                                );
-                            }
-                            *next_inedx_i.lock().unwrap() += 1;
-                            *match_index_i.lock().unwrap() = *next_inedx_i.lock().unwrap();
-                            myprintln!(
-                                "{} update next index to {}",
-                                i,
-                                *next_inedx_i.lock().unwrap()
-                            );
-                        }else if !reply.success{
-                            // append false
-                            if *next_inedx_i.lock().unwrap() != 0{
-                                *next_inedx_i.lock().unwrap() -= 1;
-                                *match_index_i.lock().unwrap() = *next_inedx_i.lock().unwrap();
-                                myprintln!(
-                                    "{} rollback next index to {}",
-                                    i,
-                                    *next_inedx_i.lock().unwrap()
-                                );
-                            }
-                        }
-                        //tx.send(reply);
-                    }
-                    Err(e) => {
-                        myprintln!("append failed because {:?}", e);
-                    }
-                }
-            });
-        }
-        myprintln!("{} end this heartbeat", self.me);
-    } */
 
     fn update_commit_index(&mut self) {
         let last_index = self.last_index;
@@ -729,10 +570,11 @@ impl Node {
                     }
                     Role::LEADER => {
                         //myprintln!("{} start heartbeat", me);
+                        thread::sleep(time::Duration::from_millis(50));
                         if raft.lock().unwrap().role == Role::LEADER {
                             Node::start_append_entry(raft.clone());
                         }
-                        thread::sleep(time::Duration::from_millis(50));
+
                     }
                 }
                 raft.lock().unwrap().apply_log();

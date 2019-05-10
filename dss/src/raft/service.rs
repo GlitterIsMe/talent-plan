@@ -78,4 +78,11 @@ pub struct AppendEntriesReply {
     // matching prevLogIndex and prevLogTerm
     #[prost(bool, tag = "2")]
     pub success: bool,
+
+    /*#[prost(uint64, tag = "3")]
+    pub conflict_term: u64,
+
+    #[prost(uint64, tag = "4")]
+    pub conflict_index: u64,*/
+
 }

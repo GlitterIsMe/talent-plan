@@ -555,7 +555,7 @@ fn test_count_2b() {
     }
     cfg.end();
 } */
-/*
+
 #[test]
 fn test_persist1_2c() {
     let servers = 3;
@@ -602,7 +602,7 @@ fn test_persist1_2c() {
 
     cfg.end();
 }
-*/
+
 #[test]
 fn test_persist2_2c() {
     let servers = 5;

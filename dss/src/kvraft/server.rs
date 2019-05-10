@@ -1,15 +1,32 @@
 use super::service::*;
 use crate::raft;
 
-use futures::sync::mpsc::unbounded;
+use futures::sync::mpsc::{unbounded, UnboundedReceiver};
 use labrpc::RpcFuture;
+use crate::raft::ApplyMsg;
+
+use std::sync::{Arc, Mutex};
+
+enum Operation{
+    Get,
+    Put,
+    Append,
+}
+
+struct Op{
+    key: String,
+    value: String,
+    op: Operation,
+    client_id: u64,
+    seq_no: u64,
+}
 
 pub struct KvServer {
     pub rf: raft::Node,
     me: usize,
     // snapshot if log grows this big
     maxraftstate: Option<usize>,
-    // Your definitions here.
+    apply_ch: UnboundedReceiver<ApplyMsg>,
 }
 
 impl KvServer {
@@ -28,6 +45,7 @@ impl KvServer {
             me,
             maxraftstate,
             rf: raft::Node::new(rf),
+            apply_ch,
         }
     }
 }
@@ -48,13 +66,15 @@ impl KvServer {
 // ```
 #[derive(Clone)]
 pub struct Node {
-    // Your definitions here.
+    raft_store: Arc<Mutex<KvServer>>,
 }
 
 impl Node {
     pub fn new(kv: KvServer) -> Node {
         // Your code here.
-        Node {}
+        Node {
+            raft_store: Arc::new(Mutex::new(kv)),
+        }
     }
 
     /// the tester calls Kill() when a KVServer instance won't
@@ -62,7 +82,7 @@ impl Node {
     /// in Kill(), but it might be convenient to (for example)
     /// turn off debug output from this instance.
     pub fn kill(&self) {
-        // Your code here, if desired.
+        self.raft_store.lock().unwrap().rf.kill();
     }
 
     /// The current term of this peer.
@@ -76,10 +96,7 @@ impl Node {
     }
 
     pub fn get_state(&self) -> raft::State {
-        // Your code here.
-        raft::State {
-            ..Default::default()
-        }
+        self.raft_store.lock().unwrap().rf.get_state()
     }
 }
 

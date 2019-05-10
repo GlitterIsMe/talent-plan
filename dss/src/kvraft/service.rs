@@ -31,7 +31,8 @@ pub struct PutAppendReply {
 pub struct GetRequest {
     #[prost(string, tag = "1")]
     pub key: String,
-    // You'll have to add definitions here.
+    #[prost(int64, tag = "2")]
+    pub client_id: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]
