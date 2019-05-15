@@ -3,7 +3,7 @@ use std::sync::{
     mpsc::{channel, Sender},
     Arc, Mutex,
 };
-use std::{thread};
+use std::thread;
 use rand::Rng;
 
 use futures::sync::mpsc::UnboundedSender;
@@ -26,12 +26,12 @@ use std::time::Duration;
 use std::sync::mpsc::Receiver;
 use std::any::TypeId;
 
-use crate::kvraft::server::OpEntry as Entry;
+use crate::kvraft::server::Operation as Entry;
 
 macro_rules! myprintln {
     ($($arg: tt)*) => {
-        println!("Debug({}:{}): {}", file!(), line!(),
-            format_args!($($arg)*));
+        //println!("Debug({}:{}): {}", file!(), line!(),
+          //  format_args!($($arg)*));
     };
 }
 
@@ -81,7 +81,6 @@ pub struct PersistInfo {
 
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-
 enum Role {
     FOLLOWER = 1,
     CANDIDATE = 2,
@@ -144,7 +143,7 @@ impl RaftSnapshot {
             entry_term: 0,
             leader_commit: self.commit_index as u64, // index of leader has commited
         };
-        while index < self.log.len(){
+        while index < self.log.len() {
             myprintln!("add a log@{}", index);
             args.entries.push(self.log[index].clone());
             index += 1;
@@ -389,7 +388,6 @@ impl Raft {
         self.snapshot_index = index;
         self.snapshot_term = self.log[0].term;
         self.persist();  //无需保存snapshot，因为kv_server前面保存了
-
     }
 
     /// example code to send a RequestVote RPC to a server.
@@ -422,7 +420,7 @@ impl Raft {
                             //let snap = raft.lock().unwrap().snapshot();
                             let mut raft = raft.lock().unwrap();
                             myprintln!("{} get a response", raft.me);
-                            if raft.role == Role::LEADER{
+                            if raft.role == Role::LEADER {
                                 return Ok(());
                             }
                             if reply.term > raft.term {
@@ -461,7 +459,7 @@ impl Raft {
                             let mut raft = raft.lock().unwrap();
                             let me = raft.me;
                             let i = server;
-                            if raft.role != Role::LEADER{
+                            if raft.role != Role::LEADER {
                                 myprintln!("{} not a leader any more and quit directly", me);
                                 return Ok(());
                             }
@@ -494,22 +492,22 @@ impl Raft {
                                     // need to rollback nextindex
                                     let mut find_conflict = false;
                                     let mut last_index: u64 = 0;
-                                    if reply.conflict_term != 0{
-                                        for i in (raft.log.len() - 1)..=0{
-                                            if raft.log[i].term == reply.conflict_term{
+                                    if reply.conflict_term != 0 {
+                                        for i in (raft.log.len() - 1)..=0 {
+                                            if raft.log[i].term == reply.conflict_term {
                                                 find_conflict = true;
                                                 last_index = i as u64 + raft.snapshot_index;
                                                 break;
                                             }
                                         }
-                                        if find_conflict{
+                                        if find_conflict {
                                             myprintln!("set next_index[{}] to {}", i, last_index.min(reply.conflict_index));
                                             raft.set_next_index(i, last_index.min(reply.conflict_index));
-                                        }else{
+                                        } else {
                                             myprintln!("set next_index[{}] to {}", i, reply.conflict_index);
                                             raft.set_next_index(i, reply.conflict_index);
                                         }
-                                    }else{
+                                    } else {
                                         myprintln!("set next_index[{}] to {}", i, reply.conflict_index);
                                         raft.set_next_index(i, reply.conflict_index);
                                     }
@@ -651,9 +649,9 @@ impl Raft {
         self.term
     }
 
-    fn vote_for(&mut self, who: i32){
+    fn vote_for(&mut self, who: i32) {
         self.vote_for = who;
-        if who == self.me as i32{
+        if who == self.me as i32 {
             self.vote_count += 1;
         }
     }
@@ -662,7 +660,7 @@ impl Raft {
         self.leader_id == self.me
     }
 
-    fn set_leader(&mut self, who: usize){
+    fn set_leader(&mut self, who: usize) {
         self.leader_id = who;
     }
 
@@ -751,7 +749,7 @@ impl Raft {
 // struct Node { sender: Sender<Msg> }
 // ```
 // 通过RPC实现则使用Raft结构，也可以通过多线程+channel的形式实现（当然是选择RPC）
-enum TimeoutType{
+enum TimeoutType {
     Election,
     HeartBeat,
 }
@@ -811,8 +809,8 @@ impl Node {
         node
     }
 
-    fn get_timeout(&self, t: TimeoutType) -> u64{
-        match t{
+    fn get_timeout(&self, t: TimeoutType) -> u64 {
+        match t {
             TimeoutType::HeartBeat => HEARTBEAT_TIMEOUT,
             TimeoutType::Election => {
                 rand::thread_rng().gen_range(MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT)
@@ -820,7 +818,7 @@ impl Node {
         }
     }
 
-    fn raft_main(node: Node, rx: Receiver<bool>, tx: Sender<bool>){
+    fn raft_main(node: Node, rx: Receiver<bool>, tx: Sender<bool>) {
         let raft = node.raft.clone();
         let shutdown = node.shutdown.clone();
         //let mut node = node.clone();
@@ -857,16 +855,16 @@ impl Node {
                         match rx.recv_timeout(Duration::from_millis(node.get_timeout(TimeoutType::Election))) {
                             Ok(res) => {
                                 // transfer to leader
-                                if res{
+                                if res {
                                     raft.lock().unwrap().transfer_state(Role::LEADER);
                                 }
-                                },
+                            }
                             Err(e) => (),
                         }
                     }
                     Role::LEADER => {
                         thread::sleep(Duration::from_millis(node.get_timeout(TimeoutType::HeartBeat)));
-                        if raft.lock().unwrap().role != Role::LEADER{
+                        if raft.lock().unwrap().role != Role::LEADER {
                             continue;
                         }
                         node.start_append_entry();
@@ -1175,7 +1173,7 @@ impl RaftService for Node {
         } else if snap.term < args.term {
             // term is less smaller than args
             self.raft.lock().unwrap().update_term_to(args.term);
-            if snap.role != Role::FOLLOWER{
+            if snap.role != Role::FOLLOWER {
                 self.raft.lock().unwrap().transfer_state(Role::FOLLOWER);
             }
             // state change update snapshot
@@ -1187,14 +1185,14 @@ impl RaftService for Node {
             vote_granted: false,
         };
 
-        if snap.vote_for == -1{
+        if snap.vote_for == -1 {
             if (args.last_log_term == snap.last_log_term()
                 && args.last_log_index >= snap.last_log_index())
-                    || args.last_log_term > args.last_log_term{
+                || args.last_log_term > args.last_log_term {
                 // reset follower timeout
                 self.msg_tx.send(false).unwrap();
                 self.raft.lock().unwrap().vote_for(args.candidate_id as i32);
-                if snap.role != Role::FOLLOWER {self.raft.lock().unwrap().transfer_state(Role::FOLLOWER);}
+                if snap.role != Role::FOLLOWER { self.raft.lock().unwrap().transfer_state(Role::FOLLOWER); }
                 reply.vote_granted = true;
             }
         }
@@ -1277,14 +1275,14 @@ impl RaftService for Node {
         }
 
         let (mut prev_log_index, mut prev_log_term) = (0, 0);
-        if args.prev_log_index < (snap.log.len() as u64 + snap.snapshot_index){
+        if args.prev_log_index < (snap.log.len() as u64 + snap.snapshot_index) {
             // 正常情况：prev_log_index = log_len - 1
             // 非正常情况： prev_log_index < log_len - 1
             prev_log_index = args.prev_log_index;
             prev_log_term = snap.log[(prev_log_index - snap.snapshot_index) as usize].term;
         }// else follower丢失部分日志
         myprintln!("{} get prev_log_index@{}, prev_log_term[{}]", me, prev_log_index, prev_log_term);
-        if prev_log_index == args.prev_log_index && prev_log_term == args.prev_log_term{
+        if prev_log_index == args.prev_log_index && prev_log_term == args.prev_log_term {
             // prev_log_term匹配，从prev_index开始追加日志
             // 同时覆盖不正常的日志
             myprintln!("{} log match and append", me);
@@ -1296,27 +1294,27 @@ impl RaftService for Node {
             raft.log.truncate((prev_log_index + 1 - snap_index) as usize);
             raft.log.append(&mut args.entries.clone());
             raft.last_index = raft.snapshot_index + raft.log.len() as u64 - 1;
-            if args.leader_commit > raft.commit_index{
+            if args.leader_commit > raft.commit_index {
                 // update commit index of raft
                 raft.commit_index = args.leader_commit.min(raft.last_index);
                 myprintln!("{} update commit index to {}", me, raft.commit_index);
             }
             reply.conflict_term = raft.log[(raft.last_index - raft.snapshot_index) as usize].term;
             reply.conflict_index = raft.last_index;
-        }else{
+        } else {
             // prev_log_term不匹配
-            reply.success  =false;
+            reply.success = false;
             let mut start = 1 + snap.snapshot_index;
             reply.conflict_term = prev_log_term;
-            if reply.conflict_term == 0{
+            if reply.conflict_term == 0 {
                 // follower has less log than leader
                 start = snap.log.len() as u64 + snap.snapshot_index;
                 reply.conflict_term = snap.log[(start - snap.snapshot_index) as usize - 1].term;
                 myprintln!("log is lost and start@[{}], term is {}", start, reply.conflict_term);
-            }else{
+            } else {
                 // 从prev_log_index开始往前找，找到一个不匹配的地方
-                for i in prev_log_index..=snap.snapshot_index{
-                    if snap.log[(i - snap.snapshot_index) as usize].term != prev_log_term{
+                for i in prev_log_index..=snap.snapshot_index {
+                    if snap.log[(i - snap.snapshot_index) as usize].term != prev_log_term {
                         start = i + 1;
                         myprintln!("log not match and start@[{}], term is {}", start, reply.conflict_term);
                         break;
@@ -1363,12 +1361,9 @@ impl RaftService for Node {
                 entry: vec![],
             };
             self.raft.lock().unwrap().log = vec![log];
-            snap = self.raft.lock().unwrap().snapshot();
-        }
-        else {
+        }else {
             self.raft.lock().unwrap().delete_prev_log(args.last_included_index);
         }
-
         {
             let mut raft = self.raft.lock().unwrap();
             raft.snapshot_index = args.last_included_index;
@@ -1387,7 +1382,6 @@ impl RaftService for Node {
             };
             let _ret = raft.apply_ch.unbounded_send(mesg);
             myprintln!("id:{} apply snapshot:{}", raft.me, raft.snapshot_index);
-
         }
         Box::new(futures::future::result(Ok(reply)))
     }

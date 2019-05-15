@@ -2,11 +2,12 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use std::cell::Cell;
 
 use futures::Future;
 
-const TIMEOUT_WAIT_RAFT: u64 = 110;
-const TIMEOUT_WAIT_NEXT_LEADER: u64 = 50;
+const RAFT_TIMEOUT: u64 = 110;
+const ELECTION_TIMEOUT: u64 = 50;
 
 use super::service;
 
@@ -19,7 +20,7 @@ pub struct Clerk {
     pub name: String,
     servers: Vec<service::KvClient>,
     seq: Arc<Mutex<u64>>,
-    leader_id: Arc<Mutex<usize>>,
+    leader_id: Cell<usize>,
 }
 
 impl fmt::Debug for Clerk {
@@ -34,7 +35,7 @@ impl Clerk {
             name,
             servers,
             seq: Arc::new(Mutex::new(0)),
-            leader_id: Arc::new(Mutex::new(0)),
+            leader_id: Cell::new(0),
         }
     }
 
@@ -57,7 +58,7 @@ impl Clerk {
             seq: self.get_seq(), //seq += 1;
             client_name: self.name.clone(),
         };
-        let mut leader = *self.leader_id.lock().unwrap();
+        let mut leader = self.leader_id.get();
         loop {
             let ret = self.servers[leader].get(&args.clone()).wait();
             match ret {
@@ -66,23 +67,23 @@ impl Clerk {
                     if reply.err == "OK" {
                         //成功提交，并返回
                         if !reply.wrong_leader {
-                            *self.leader_id.lock().unwrap() = leader;
+                            self.leader_id.set(leader);
                         }
                         return reply.value;
                     }
                     if !reply.wrong_leader {
                         //正常leader,
-                        *self.leader_id.lock().unwrap() = leader;
-                        thread::sleep(Duration::from_millis(TIMEOUT_WAIT_RAFT)); //等成功提交
+                        self.leader_id.set(leader);
+                        thread::sleep(Duration::from_millis(RAFT_TIMEOUT)); //等成功提交
                     } else {
                         //错误leader
                         leader = (leader + 1) % self.servers.len();
-                        thread::sleep(Duration::from_millis(TIMEOUT_WAIT_NEXT_LEADER));
+                        thread::sleep(Duration::from_millis(ELECTION_TIMEOUT));
                     }
                 }
                 Err(_) => {
                     leader = (leader + 1) % self.servers.len();
-                    thread::sleep(Duration::from_millis(TIMEOUT_WAIT_NEXT_LEADER));
+                    thread::sleep(Duration::from_millis(ELECTION_TIMEOUT));
                 }
             }
             //leader = (leader + 1) % self.servers.len();
@@ -123,7 +124,7 @@ impl Clerk {
             seq,
             client_name: self.name.clone(),
         };
-        let mut leader = *self.leader_id.lock().unwrap();
+        let mut leader = self.leader_id.get();
         loop {
             let ret = self.servers[leader]
                 .put_append(&args.clone())
@@ -131,25 +132,24 @@ impl Clerk {
             match ret {
                 Ok(reply) => {
                     if reply.err == "OK" {
-                        //成功提交，并返回
                         if !reply.wrong_leader {
-                            *self.leader_id.lock().unwrap() = leader;
+                            self.leader_id.set(leader);
                         }
                         return;
                     }
                     if !reply.wrong_leader {
-                        *self.leader_id.lock().unwrap() = leader;
+                        self.leader_id.set(leader);
                         // wait for raft
-                        thread::sleep(Duration::from_millis(TIMEOUT_WAIT_RAFT));
+                        thread::sleep(Duration::from_millis(RAFT_TIMEOUT));
                     } else {
                         leader = (leader + 1) % self.servers.len();
                         // wait for election
-                        thread::sleep(Duration::from_millis(TIMEOUT_WAIT_NEXT_LEADER));
+                        thread::sleep(Duration::from_millis(ELECTION_TIMEOUT));
                     }
                 }
                 Err(e) => {
                     leader = (leader + 1) % self.servers.len();
-                    thread::sleep(Duration::from_millis(TIMEOUT_WAIT_NEXT_LEADER));
+                    thread::sleep(Duration::from_millis(ELECTION_TIMEOUT));
                 }
             }
         }
