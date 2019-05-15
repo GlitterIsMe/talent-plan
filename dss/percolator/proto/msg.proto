@@ -25,6 +25,7 @@ message GetRequest {
 message GetResponse {
     bool found = 1;
     bytes value = 2;
+    bool key_is_locked = 3;
 }
 
 message KeyValue{

@@ -128,10 +128,11 @@ pub struct MemoryStorage {
 impl transaction::Service for MemoryStorage {
     // example get RPC handler.
     fn get(&self, req: GetRequest) -> RpcFuture<GetResponse> {
-        println!("Get {:?}@{}", req.key, req.start_ts);
+        //println!("Get {:?}@{}", req.key, req.start_ts);
         let mut reply = GetResponse {
             found: false,
             value: vec![],
+            key_is_locked: false,
         };
         loop {
             let snapshot = self.get_snapshot();
@@ -140,8 +141,11 @@ impl transaction::Service for MemoryStorage {
                     // continue wait
                     // start_ts and key is the start_ts and key of the lock
                     // req.key == key.0
-                    println!("get lock {:?}@{:?}", key.0, key.1);
-                    self.back_off_maybe_clean_up_lock(key.1, req.key.clone());
+                    //println!("get lock {:?}@{:?}", key.0, key.1);
+                    if !self.back_off_maybe_clean_up_lock(key.1, req.key.clone()){
+                        reply.key_is_locked = true;
+                        return Box::new(futures::future::result(Ok(reply)));
+                    }
                 }
                 None => {
                     break;
@@ -185,7 +189,7 @@ impl transaction::Service for MemoryStorage {
     fn prewrite(&self, req: PrewriteRequest) -> RpcFuture<PrewriteResponse> {
         // 1.read from write@[start_ts, ∞]
         // if there has a commit record then return false
-        println!("PreWrite @{}", req.start_ts);
+        //println!("PreWrite @{}", req.start_ts);
         let mut reply = PrewriteResponse { success: false };
         for kv in req.kvs {
             {
@@ -199,7 +203,7 @@ impl transaction::Service for MemoryStorage {
                     None);
                 match check_commit {
                     Some(res) => {
-                        println!("get a commit after start_ts {:?}@{:?}", (res.0).0, (res.0).1);
+                        //println!("get a commit after start_ts {:?}@{:?}", (res.0).0, (res.0).1);
                         return Box::new(futures::future::result(Ok(reply)));
                     }
                     None => (),
@@ -219,7 +223,7 @@ impl transaction::Service for MemoryStorage {
                     None);
                 match check_commit {
                     Some(res) => {
-                        println!("get a lock{:?}@{:?}", (res.0).0, (res.0).1);
+                        //println!("get a lock{:?}@{:?}", (res.0).0, (res.0).1);
                         return Box::new(futures::future::result(Ok(reply)));
                     }
                     None => (),
@@ -241,27 +245,38 @@ impl transaction::Service for MemoryStorage {
 
     // example commit RPC handler.
     fn commit(&self, req: CommitRequest) -> RpcFuture<CommitResponse> {
+        // 对于commit，只做commit的逻辑，其他逻辑交给client
+        // commit要幂等，比如重复的commit，保证不同的commit的操作结果一致（容错）
+        // 健壮性的要求，客户端的错误及时返回错误，不能将错误结果写入使得错误叠加
         // 1.for primary
         // read key from lock@start_ts
         // if no lock return false
         // else write ((key, commit_ts), start_ts) and then remove lock((key, start_ts))
-        println!("Commit @{}", req.commit_ts);
+        //println!("Commit @{}", req.commit_ts);
         let mut reply = CommitResponse { success: false };
+        let snap = self.get_snapshot();
         if req.is_primary {
-            if MemoryStorage::commit_work(self.data.clone(), req) {
-                reply.success = true;
+            match snap.read(&req.keys[0], Column::Lock, Some(req.start_ts), Some(req.start_ts)) {
+                Some(_) => (),
+                None => {
+                    //println!("dont't get a lock of key[{:?}]@[{}]", req.keys[0], req.start_ts);
+                    reply.success = false;
+                    return Box::new(futures::future::result(Ok(reply)));
+                }
             }
+            let mut data = self.data.lock().unwrap();
+            data.erase(&req.keys[0], Column::Lock, req.start_ts);
+            data.write(req.keys[0].clone(), Column::Write, req.commit_ts, Value::Timestamp(req.start_ts));
         } else {
-            let data = self.data.clone();
-            thread::spawn(|| {
-                MemoryStorage::commit_work(data, req);
-            });
-            reply.success = true;
+            // 2.for secondary
+            let mut data = self.data.lock().unwrap();
+            for key in req.keys {
+                data.erase(&key, Column::Lock, req.start_ts);
+                data.write(key, Column::Write, req.commit_ts, Value::Timestamp(req.start_ts));
+            }
         }
+        reply.success = true;
         Box::new(futures::future::result(Ok(reply)))
-
-        // 2.for secondary
-        // start a thread and do commit
     }
 }
 
@@ -270,47 +285,32 @@ impl MemoryStorage {
         self.data.lock().unwrap().clone()
     }
 
-    fn commit_work(data: Arc<Mutex<KvTable>>, req: CommitRequest) -> bool {
-        let mut data = data.lock().unwrap();
-        for key in req.keys {
-            match data.read(&key, Column::Lock, Some(req.start_ts), Some(req.start_ts)) {
-                Some(_) => (),
-                None => {
-                    println!("dont't get a lock of key[{:?}]@[{}]", key, req.start_ts);
-                    return false;
-                }
-            }
-            data.erase(&key, Column::Lock, req.start_ts);
-            data.write(key, Column::Write, req.commit_ts, Value::Timestamp(req.start_ts));
-        }
-        true
-    }
-
-    fn back_off_maybe_clean_up_lock(&self, start_ts: u64, key: Vec<u8>) {
+    fn back_off_maybe_clean_up_lock(&self, start_ts: u64, key: Vec<u8>) -> bool{
         // try to wait for the lock
         // 这个start_ts是读出来的key的ts
-        println!("try back_off or cleanup {:?}@{:?}", key, start_ts);
+        //println!("try back_off or cleanup {:?}@{:?}", key, start_ts);
         let mut dt = Local::now();
         let ts_now = dt.timestamp_nanos();
         let old_time = Duration::from_nanos(start_ts).as_nanos();
         let new_time = Duration::from_nanos(ts_now as u64).as_nanos();
         let time_duration = new_time - old_time;
         if time_duration < TTL as u128 {
-            println!("new_time{} - old_time{} = {}", new_time, old_time, time_duration as u64);
-            thread::sleep(Duration::from_nanos(TTL));
-            println!("end sleep");
+            //println!("new_time{} - old_time{} = {}", new_time, old_time, time_duration as u64);
+            // thread::sleep(Duration::from_nanos(TTL));
+            return false;
+            //println!("end sleep");
         } else {
             // if the lock execeeds ttl then clean_up
             // try to clean up
-            println!("execeeds ttl");//let data = self.data.lock().unwrap();
+            //println!("execeeds ttl");//let data = self.data.lock().unwrap();
             let snapshot = self.get_snapshot();
             match snapshot.read(&key, Column::Lock, None, Some(start_ts)) {
                 Some((key, value)) => {
-                    println!("try cleanup {:?}@{:?}", key.0, key.1);
+                    //println!("try cleanup {:?}@{:?}", key.0, key.1);
                     match value {
                         Value::Vector(primary) => {
                             // value is the primary key
-                            println!("primary is {:?}", primary);
+                            //println!("primary is {:?}", primary);
                             if key.0 == primary.to_vec() {
                                 // 1.if this is a primary, then delete it
                                 self.data.lock().unwrap().erase(primary, Column::Lock, key.1);
@@ -330,6 +330,7 @@ impl MemoryStorage {
                     panic!("not possible");
                 }
             }
+            return true;
         }
     }
 
@@ -338,7 +339,7 @@ impl MemoryStorage {
         // 这里返回的是不可变引用，所以后面再对data进行修改的时候会出错
         match snapshot.read(&primary_key, Column::Write, Some(start_ts), None) {
             Some((key, value)) => {
-                println!("primary has committed and roll forward");
+                //println!("primary has committed and roll forward");
                 // read a record indicate that primary has committed
                 let key = key.clone();
                 let secondary_start_ts: u64;
@@ -350,15 +351,15 @@ impl MemoryStorage {
                 let commit_ts = key.1;
                 let mut data = self.data.lock().unwrap();
                 data.erase(&secondary_key, Column::Lock, secondary_start_ts);
-                println!("erase lock{:?}@{:?}", secondary_key, start_ts);
+                //println!("erase lock{:?}@{:?}", secondary_key, start_ts);
                 data.write(secondary_key, Column::Write, commit_ts, Value::Timestamp(secondary_start_ts));
             }
             None => {
                 // no commit and cleanup
-                println!("primary has not committed and roll back");
+                //println!("primary has not committed and roll back");
                 let mut data = self.data.lock().unwrap();
                 data.erase(&secondary_key.clone(), Column::Lock, start_ts);
-                println!("erase lock{:?}@{:?}", secondary_key, start_ts);
+                //println!("erase lock{:?}@{:?}", secondary_key, start_ts);
             }
         }
     }

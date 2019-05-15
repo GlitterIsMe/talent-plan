@@ -43,6 +43,37 @@ pub struct RequestVoteReply {
     pub vote_granted: bool,
 }
 
+
+#[derive(Clone, PartialEq, Message)]
+pub struct LogEntry {
+    #[prost(uint64, tag = "1")]
+    pub term: u64,
+
+    #[prost(uint64, tag = "2")]
+    pub index: u64,
+
+    #[prost(bytes, tag = "3")]
+    pub entry: Vec<u8>,
+}
+
+impl LogEntry {
+    pub fn new() -> Self {
+        LogEntry {
+            term: 0,
+            index: 0,
+            entry: vec![],
+        }
+    }
+
+    pub fn from_data(term: u64, index: u64, src_entry: &Vec<u8>) -> Self {
+        LogEntry {
+            term,
+            index,
+            entry: src_entry.clone(),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct AppendEntriesArgs {
     // leader's term
@@ -59,8 +90,8 @@ pub struct AppendEntriesArgs {
     #[prost(uint64, tag = "4")]
     pub prev_log_term: u64,
     // log entry or null for heart beat
-    #[prost(bytes, tag = "5")]
-    pub entries: Vec<u8>,
+    #[prost(message, repeated, tag = "5")]
+    pub entries: Vec<LogEntry>,
     // entry's term
     #[prost(uint64, tag = "6")]
     pub entry_term: u64,
@@ -79,10 +110,34 @@ pub struct AppendEntriesReply {
     #[prost(bool, tag = "2")]
     pub success: bool,
 
-    /*#[prost(uint64, tag = "3")]
+    #[prost(uint64, tag = "3")]
     pub conflict_term: u64,
 
     #[prost(uint64, tag = "4")]
-    pub conflict_index: u64,*/
+    pub conflict_index: u64,
 
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct SnapshotArgs {
+    #[prost(uint64, tag = "1")]
+    pub term: u64,
+
+    #[prost(uint64, tag = "2")]
+    pub leader_id: u64,
+
+    #[prost(uint64, tag = "3")]
+    pub last_included_index: u64,
+
+    #[prost(uint64, tag = "4")]
+    pub last_included_term: u64,
+
+    #[prost(bytes, tag = "5")]
+    pub snapshot: Vec<u8>,
+
+}
+#[derive(Clone, PartialEq, Message)]
+pub struct SnapshotReply {
+    #[prost(uint64, tag = "1")]
+    pub term: u64,
 }

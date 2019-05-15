@@ -53,7 +53,7 @@ impl Client {
         for _ in 0..RETRY_TIMES{
             match self.tso_client.get_timestamp(&req).wait(){
                 Ok(reply) => {
-                    println!("get a timestamp {}", reply.ts);
+                    //println!("get a timestamp {}", reply.ts);
                     res = Ok(reply.ts);
                     break;
                 },
@@ -86,24 +86,26 @@ impl Client {
             key,
             start_ts: self.start_ts,
         };
-        /*match self.tso_client.get_timestamp(&tso_req).wait(){
-            Ok(reply) =>{
-                req = GetRequest{
-                    key,
-                    start_ts: reply.ts,
-                };
-            },
-            Err(e) =>{
-                return Err(e);
-            }
-        }*/
-
         match self.txn_client.get(&req).wait(){
             Ok(reply) => {
-                if reply.found{
-                    Ok(reply.value)
+                if reply.key_is_locked{
+                    thread::sleep(Duration::from_millis(100 as u64));
+                    match self.txn_client.get(&req).wait(){
+                        Ok(reply) =>{
+                            if reply.found{
+                                return Ok(reply.value);
+                            }else{
+                                return Ok(Vec::new());
+                            }
+                        },
+                        Err(e) => return Err(e),
+                    }
                 }else{
-                    Ok(Vec::new())
+                    if reply.found{
+                        Ok(reply.value)
+                    }else{
+                        Ok(Vec::new())
+                    }
                 }
             },
             Err(e) => Err(e),
@@ -201,17 +203,12 @@ impl Client {
             start_ts,
             keys,
         };
-        /*match self.txn_client.commit(&secondary_commit_req).wait(){
-            Ok(reply) => {
-                if !reply.success{
-                    return Ok(false);
-                }else{
-                    return Ok(true);
-                }
-            },
-            Err(e) => {return Err(e);}
-        }*/
-        self.txn_client.commit(&secondary_commit_req).wait();
+        self.txn_client.spawn(self.txn_client
+            .commit(&secondary_commit_req)
+            .then(|_|{
+                Ok(())
+            }));
+        //self.txn_client.commit(&secondary_commit_req).wait();
         Ok(true)
     }
 }

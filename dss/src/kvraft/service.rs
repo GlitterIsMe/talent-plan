@@ -17,6 +17,11 @@ pub struct PutAppendRequest {
     #[prost(enumeration = "Op", tag = "3")]
     pub op: i32,
     // You'll have to add definitions here.
+    #[prost(uint64, tag = "4")]
+    pub seq: u64,
+
+    #[prost(string, tag = "5")]
+    pub client_name: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -31,8 +36,12 @@ pub struct PutAppendReply {
 pub struct GetRequest {
     #[prost(string, tag = "1")]
     pub key: String,
-    #[prost(int64, tag = "2")]
-    pub client_id: u64,
+    // You'll have to add definitions here.
+    #[prost(uint64, tag = "2")]
+    pub seq: u64,
+
+    #[prost(string, tag = "3")]
+    pub client_name: String,
 }
 
 #[derive(Clone, PartialEq, Message)]

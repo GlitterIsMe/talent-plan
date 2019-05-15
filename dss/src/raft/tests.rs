@@ -145,6 +145,7 @@ fn test_fail_agree_2b() {
     cfg.end();
 }
 
+
 #[test]
 fn test_fail_no_agree_2b() {
     let servers = 5;
@@ -197,7 +198,7 @@ fn test_fail_no_agree_2b() {
     cfg.end();
 }
 
-/*
+
 #[test]
 fn test_concurrent_starts_2b() {
     let servers = 3;
@@ -287,8 +288,8 @@ fn test_concurrent_starts_2b() {
 
     cfg.end();
 }
-*/
-/*
+
+
 #[test]
 fn test_rejoin_2b() {
     let servers = 3;
@@ -339,9 +340,7 @@ fn test_rejoin_2b() {
 
     cfg.end();
 }
-*/
 
-/*
 #[test]
 fn test_backup_2b() {
     let servers = 5;
@@ -424,10 +423,8 @@ fn test_backup_2b() {
 
     cfg.end();
 } 
-*/
 
-
-/*#[test]
+#[test]
 fn test_count_2b() {
     const SERVERS: usize = 3;
     fn rpcs(cfg: &Config) -> usize {
@@ -554,7 +551,8 @@ fn test_count_2b() {
         );
     }
     cfg.end();
-} */
+}
+
 
 #[test]
 fn test_persist1_2c() {
