@@ -26,6 +26,8 @@ use std::time::Duration;
 use std::sync::mpsc::Receiver;
 use std::any::TypeId;
 
+use crate::kvraft::server::OpEntry as Entry;
+
 macro_rules! myprintln {
     ($($arg: tt)*) => {
         println!("Debug({}:{}): {}", file!(), line!(),
@@ -37,6 +39,8 @@ pub struct ApplyMsg {
     pub command_valid: bool,
     pub command: Vec<u8>,
     pub command_index: u64,
+    pub is_snapshot: bool,
+    pub snapshot: Vec<u8>,
 }
 
 /// State of a raft peer.
@@ -67,6 +71,12 @@ pub struct PersistInfo {
 
     #[prost(bytes, repeated, tag = "3")]
     pub log: Vec<Vec<u8>>,
+
+    #[prost(uint64, tag = "4")]
+    pub snapshot_index: u64,
+
+    #[prost(uint64, tag = "5")]
+    pub snapshot_term: u64,
 }
 
 
@@ -107,6 +117,9 @@ struct RaftSnapshot {
     term: u64,
     role: Role,
     peer_num: u64,
+
+    snapshot_index: u64,
+    snapshot_term: u64,
 }
 
 impl RaftSnapshot {
@@ -151,11 +164,20 @@ impl RaftSnapshot {
     }
 
     fn last_log_index(&self) -> u64 {
-        self.last_index
+        (self.snapshot_index as usize + self.log.len() - 1) as u64
     }
 
     fn last_log_term(&self) -> u64 {
-        self.log[self.last_index as usize].term
+        self.log[(self.last_log_index() - self.snapshot_index) as usize].term
+    }
+
+    fn get_log(&self, index: u64) -> Option<LogEntry> {
+        let index = index - self.snapshot_index;
+        if ((self.log.len() - 1) as u64) < index {
+            None
+        } else {
+            Some(self.log[index as usize].clone())
+        }
     }
 }
 
@@ -199,6 +221,10 @@ pub struct Raft {
     //vote_count: Arc<AtomicUsize>,
 
     vote_count: u64,
+
+    snapshot_index: u64,
+
+    snapshot_term: u64,
 }
 
 impl Raft {
@@ -238,6 +264,8 @@ impl Raft {
             term: 0,
             role: Role::FOLLOWER,
             vote_count: 0,
+            snapshot_index: 0,
+            snapshot_term: 0,
         };
 
         // initialize from state persisted before a crash
@@ -260,6 +288,8 @@ impl Raft {
             term: self.term,
             vote_for: self.vote_for,
             log: Vec::new(),
+            snapshot_index: self.snapshot_index,
+            snapshot_term: self.snapshot_term,
         };
         myprintln!("persist {}", self.me);
         for i in 1..self.log.len() {
@@ -271,6 +301,27 @@ impl Raft {
         labcodec::encode(&pinfo, &mut raw_data).unwrap();
         //myprintln!("save {} bytes data", raw_data.len());
         self.persister.save_raft_state(raw_data);
+    }
+
+    pub fn save_state_and_snapshot(&self, snap_data: Vec<u8>) {
+        let mut raw_data: Vec<u8> = Vec::new();
+        let mut pinfo = PersistInfo {
+            term: self.term,
+            vote_for: self.vote_for,
+            log: Vec::new(),
+            snapshot_index: self.snapshot_index,
+            snapshot_term: self.snapshot_term,
+        };
+        myprintln!("persist {}", self.me);
+        for i in 1..self.log.len() {
+            myprintln!("persist log[{}]", i);
+            let mut raw_log_entry: Vec<u8> = Vec::new();
+            labcodec::encode(&self.log[i], &mut raw_log_entry).unwrap();
+            pinfo.log.push(raw_log_entry);
+        }
+        labcodec::encode(&pinfo, &mut raw_data).unwrap();
+        self.persister.save_state_and_snapshot(raw_data, snap_data);
+        //my_debug!("id:{} save_state_and_snapshot",self.me);
     }
 
     /// restore previously persisted state.
@@ -291,6 +342,54 @@ impl Raft {
             self.log.push(entry);
             self.last_index += 1;
         }
+        self.vote_for = raw_data.vote_for;
+        self.snapshot_index = raw_data.snapshot_index;
+        self.snapshot_term = raw_data.snapshot_term;
+        self.term = raw_data.term
+    }
+
+    pub fn delete_prev_log(&mut self, save_index: u64) {  //save_index是日志的index
+        //删除save_index前面的log，save_index不删除
+        let save_index = save_index - self.snapshot_index;  //vector数组的index
+        if ((self.log.len() - 1) as u64) < save_index {  //log不够，
+            myprintln!("error:id:{} delete prev log save_index:{} snapshot_index:{} log:{}",
+                self.me, save_index, self.snapshot_index, self.log.len());
+            return;
+        }
+        let _delete: Vec<LogEntry> = self.log.drain(..(save_index as usize)).collect();
+        for de in &_delete {
+            let entry = de.entry.clone();
+            let mut _entr: Option<Entry> = None;
+            match labcodec::decode(&entry) {
+                Ok(en) => {
+                    _entr = Some(en);
+                }
+                Err(e) => {}
+            }
+            myprintln!(
+                "id:{} delete prev log:[{}:{}:{:?}]",
+                self.me,
+                de.index,
+                de.term,
+                _entr
+            );
+        }
+    }
+
+    pub fn check_and_do_compress_log(&mut self, maxraftstate: usize, index: u64) {
+        if maxraftstate > self.persister.raft_state().len() {  //未超过，无需压缩日志
+            return;
+        }
+        if index > self.commit_index || index <= self.snapshot_index {
+            myprintln!("error:id:{} compress_log error index:{} commit:{} snapshot:{}",
+                self.me, index, self.commit_index, self.snapshot_index);
+            return;
+        }
+        self.delete_prev_log(index);  //删除index之前的日志
+        self.snapshot_index = index;
+        self.snapshot_term = self.log[0].term;
+        self.persist();  //无需保存snapshot，因为kv_server前面保存了
+
     }
 
     /// example code to send a RequestVote RPC to a server.
@@ -399,7 +498,7 @@ impl Raft {
                                         for i in (raft.log.len() - 1)..=0{
                                             if raft.log[i].term == reply.conflict_term{
                                                 find_conflict = true;
-                                                last_index = i as u64;
+                                                last_index = i as u64 + raft.snapshot_index;
                                                 break;
                                             }
                                         }
@@ -536,6 +635,8 @@ impl Raft {
                     .entry
                     .clone(),
                 command_index: self.last_applied as u64,
+                is_snapshot: false,
+                snapshot: vec![],
             };
             let tx = self.apply_ch.clone();
             tx.unbounded_send(msg)
@@ -629,6 +730,8 @@ impl Raft {
             term: self.term,
             role: self.role,
             peer_num: self.peers.len() as u64,
+            snapshot_index: self.snapshot_index,
+            snapshot_term: self.snapshot_term,
         }
     }
 }
@@ -1039,6 +1142,14 @@ impl Node {
         self.raft.lock().unwrap().persist();
         self.shutdown.store(true, Ordering::SeqCst);
     }
+
+    pub fn save_state_and_snapshot(&self, data: Vec<u8>) {
+        self.raft.lock().unwrap().save_state_and_snapshot(data);
+    }
+
+    pub fn check_and_do_compress_log(&self, maxraftstate: usize, index: u64) {
+        self.raft.lock().unwrap().check_and_do_compress_log(maxraftstate, index);
+    }
 }
 
 impl RaftService for Node {
@@ -1157,12 +1268,20 @@ impl RaftService for Node {
             conflict_index: 0,
         };
 
+        if args.prev_log_index < snap.snapshot_index {
+            reply.success = false;
+            reply.term = snap.term;
+            reply.conflict_term = snap.snapshot_term;
+            reply.conflict_index = snap.snapshot_index;
+            return Box::new(futures::future::result(Ok(reply)));
+        }
+
         let (mut prev_log_index, mut prev_log_term) = (0, 0);
-        if args.prev_log_index < (snap.log.len() as u64){
+        if args.prev_log_index < (snap.log.len() as u64 + snap.snapshot_index){
             // 正常情况：prev_log_index = log_len - 1
             // 非正常情况： prev_log_index < log_len - 1
             prev_log_index = args.prev_log_index;
-            prev_log_term = snap.log[prev_log_index as usize].term;
+            prev_log_term = snap.log[(prev_log_index - snap.snapshot_index) as usize].term;
         }// else follower丢失部分日志
         myprintln!("{} get prev_log_index@{}, prev_log_term[{}]", me, prev_log_index, prev_log_term);
         if prev_log_index == args.prev_log_index && prev_log_term == args.prev_log_term{
@@ -1173,32 +1292,31 @@ impl RaftService for Node {
             reply.success = true;
             myprintln!("{} log len is {}, entry num is {}", me, raft.log.len(), args.entries.len());
             //myprintln!("truncate {} - {} - 1", len, prev_log_index);
-            raft.log.truncate((prev_log_index + 1) as usize);
+            let snap_index = raft.snapshot_index;
+            raft.log.truncate((prev_log_index + 1 - snap_index) as usize);
             raft.log.append(&mut args.entries.clone());
-            myprintln!("log len is {}", raft.log.len());
-            raft.last_index = (raft.log.len() - 1) as u64;
-            myprintln!("{} update last index to {}", me, raft.last_index);
+            raft.last_index = raft.snapshot_index + raft.log.len() as u64 - 1;
             if args.leader_commit > raft.commit_index{
                 // update commit index of raft
                 raft.commit_index = args.leader_commit.min(raft.last_index);
                 myprintln!("{} update commit index to {}", me, raft.commit_index);
             }
-            reply.conflict_term = raft.log[raft.last_index as usize].term;
+            reply.conflict_term = raft.log[(raft.last_index - raft.snapshot_index) as usize].term;
             reply.conflict_index = raft.last_index;
         }else{
             // prev_log_term不匹配
             reply.success  =false;
-            let mut start = 1;
+            let mut start = 1 + snap.snapshot_index;
             reply.conflict_term = prev_log_term;
             if reply.conflict_term == 0{
                 // follower has less log than leader
-                start = snap.log.len() as u64;
-                reply.conflict_term = snap.log[start as usize - 1].term;
+                start = snap.log.len() as u64 + snap.snapshot_index;
+                reply.conflict_term = snap.log[(start - snap.snapshot_index) as usize - 1].term;
                 myprintln!("log is lost and start@[{}], term is {}", start, reply.conflict_term);
             }else{
                 // 从prev_log_index开始往前找，找到一个不匹配的地方
-                for i in prev_log_index..=0{
-                    if snap.log[i as usize].term != prev_log_term{
+                for i in prev_log_index..=snap.snapshot_index{
+                    if snap.log[(i - snap.snapshot_index) as usize].term != prev_log_term{
                         start = i + 1;
                         myprintln!("log not match and start@[{}], term is {}", start, reply.conflict_term);
                         break;
@@ -1207,69 +1325,70 @@ impl RaftService for Node {
             }
             reply.conflict_index = start;
         }
+        self.raft.lock().unwrap().persist();
 
         Box::new(futures::future::result(Ok(reply)))
+    }
 
-        /*// do log consistency check
-        if last_log_index < args.prev_log_index {
-            //log不够，返回并next_index -1重来
-            myprintln!(
-                    "{} reply false for {} because log lost:[index:{}-{}]",
-                    me,
-                    args.leader_id,
-                    last_log_index,
-                    args.prev_log_index,
-                );
-            reply.success = false;
+    fn install_snapshot(&self, args: SnapshotArgs) -> RpcFuture<SnapshotReply> {
+        //let mut raft = self.raft.lock().unwrap();
+        let mut snap = self.raft.lock().unwrap().snapshot();
+        let mut reply = SnapshotReply {
+            term: snap.term,
+        };
+        if args.term < snap.term {
+            myprintln!("warn:me[{}:{}] recv term [{}:{}]", snap.me, snap.term, args.leader_id, args.term);
             return Box::new(futures::future::result(Ok(reply)));
         }
-        // 一定是last_log_index大于等于prev_log_index的情况
-        let prev_log_term = snap.log[args.prev_log_index as usize].term;
-        if prev_log_term != args.prev_log_term {
-            // prev_log_term不匹配，回退重试
-            myprintln!(
-                    "{} reply false for {} because unmatched term:[term: {}-{}]",
-                    me,
-                    args.leader_id,
-                    prev_log_term,
-                    args.prev_log_term
-                );
-            reply.success = false;
+        if args.last_included_index <= snap.snapshot_index {
+            myprintln!("warn:me[{}:{}] recv snapshot [{}:{}]", snap.me, snap.snapshot_index, args.leader_id, args.last_included_index);
             return Box::new(futures::future::result(Ok(reply)));
         }
-        {
-            //do log replicate
+        self.msg_tx.send(false).unwrap();
+
+        if args.term > snap.term {
             let mut raft = self.raft.lock().unwrap();
-            if raft.log.len() > (args.prev_log_index + 1) as usize {
-                // delete wrong log
-                for i in args.prev_log_index + 1..(raft.log.len() as u64) {
-                    myprintln!("{} remove log in {}", me, i);
-                    raft.log.remove(args.prev_log_index as usize);
-                    raft.last_index -= 1;
-                }
-            }
-            let pos = args.prev_log_index + 1;
-            if args.entries.len() != 0 {
-                myprintln!(
-                "{} append log, last index[{}], log len[{}], commit_index[{}]",
-                    me,
-                    raft.last_index,
-                    raft.log.len(),
-                    raft.commit_index
-                );
-                raft.log.reserve(1);
-                raft.log.append(&mut vec![LogEntry::from_data(args.entry_term, pos + 1, &args.entries)]);
-                raft.last_index = args.prev_log_index + 1;
-                myprintln!("{} last index update to prev_log_index[{}] + 1", me, args.prev_log_index);
-            }
+            raft.update_term_to(args.term);
+            raft.vote_for(args.leader_id as i32);
+            raft.persist();
+            snap = raft.snapshot();
+        }
+        reply.term = snap.term;
 
-            if args.leader_commit > raft.commit_index as u64 {
-                raft.commit_index = raft.commit_index + 1;
-                myprintln!("update commit index to {}", raft.commit_index);
-            }
-            reply.success = true;
-            myprintln!("reply heartbeat success");
-            return Box::new(futures::future::result(Ok(reply)));
-        }*/
+        if args.last_included_index > (snap.snapshot_index + snap.log.len() as u64 - 1) {
+            // replace all the log
+            let log = LogEntry {
+                index: args.last_included_index,
+                term: args.last_included_term,
+                entry: vec![],
+            };
+            self.raft.lock().unwrap().log = vec![log];
+            snap = self.raft.lock().unwrap().snapshot();
+        }
+        else {
+            self.raft.lock().unwrap().delete_prev_log(args.last_included_index);
+        }
+
+        {
+            let mut raft = self.raft.lock().unwrap();
+            raft.snapshot_index = args.last_included_index;
+            raft.snapshot_term = args.last_included_term;
+            raft.commit_index = args.last_included_index;
+            raft.last_applied = args.last_included_index;
+
+            raft.save_state_and_snapshot(args.snapshot.clone());
+
+            let mesg = ApplyMsg {
+                command_valid: true,
+                command: vec![],
+                command_index: raft.snapshot_index,
+                is_snapshot: true,
+                snapshot: args.snapshot.clone(),
+            };
+            let _ret = raft.apply_ch.unbounded_send(mesg);
+            myprintln!("id:{} apply snapshot:{}", raft.me, raft.snapshot_index);
+
+        }
+        Box::new(futures::future::result(Ok(reply)))
     }
 }
